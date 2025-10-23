@@ -2,32 +2,45 @@ import { supabase } from './supabase';
 
 export const SERVICE_ACCOUNT_SOURCE = 'Google Sheets (Service Account)';
 
-export async function fetchPreferredMinTransactionDate(): Promise<string | null> {
-  const { data: serviceAccountRows, error: serviceAccountError } = await supabase
-    .from('transactions')
-    .select('date')
-    .eq('source', SERVICE_ACCOUNT_SOURCE)
-    .order('date', { ascending: true })
-    .limit(1);
+export interface DateRange {
+  min: string | null;
+  max: string | null;
+}
 
-  if (serviceAccountError) {
-    throw serviceAccountError;
+function normalizeDate(date: string | null | undefined): string | null {
+  if (!date) return null;
+  const isoSegment = date.split('T')[0];
+  return isoSegment || null;
+}
+
+async function fetchDateRange(source?: string): Promise<DateRange> {
+  let minQuery = supabase.from('transactions').select('date');
+  let maxQuery = supabase.from('transactions').select('date');
+
+  if (source) {
+    minQuery = minQuery.eq('source', source);
+    maxQuery = maxQuery.eq('source', source);
   }
 
-  const serviceAccountDate = serviceAccountRows?.[0]?.date ?? null;
-  if (serviceAccountDate) {
-    return serviceAccountDate;
+  const [{ data: minData, error: minError }, { data: maxData, error: maxError }] = await Promise.all([
+    minQuery.order('date', { ascending: true }).limit(1),
+    maxQuery.order('date', { ascending: false }).limit(1),
+  ]);
+
+  if (minError) throw minError;
+  if (maxError) throw maxError;
+
+  return {
+    min: normalizeDate(minData?.[0]?.date),
+    max: normalizeDate(maxData?.[0]?.date),
+  };
+}
+
+export async function fetchPreferredDateRange(): Promise<DateRange> {
+  const serviceAccountRange = await fetchDateRange(SERVICE_ACCOUNT_SOURCE);
+  if (serviceAccountRange.min || serviceAccountRange.max) {
+    return serviceAccountRange;
   }
 
-  const { data: fallbackRows, error: fallbackError } = await supabase
-    .from('transactions')
-    .select('date')
-    .order('date', { ascending: true })
-    .limit(1);
-
-  if (fallbackError) {
-    throw fallbackError;
-  }
-
-  return fallbackRows?.[0]?.date ?? null;
+  return fetchDateRange();
 }

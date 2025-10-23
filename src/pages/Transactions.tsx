@@ -16,7 +16,7 @@ import {
   formatISODateToUS,
 } from '@/lib/utils';
 import { autoReconcileAll } from '@/lib/reconciliation';
-import { fetchPreferredMinTransactionDate } from '@/lib/transactionFilters';
+import { fetchPreferredDateRange } from '@/lib/transactionFilters';
 
 const TRANSACTIONS_PER_PAGE = 50;
 
@@ -70,11 +70,21 @@ export default function Transactions() {
 
   const handleClearFilters = () => {
     setSearchTerm('');
-    setDateFrom('');
-    setDateTo('');
+    if (minDate) {
+      setDateFrom(formatISODateToUS(minDate));
+      setAppliedIsoDateFrom(minDate);
+    } else {
+      setDateFrom('');
+      setAppliedIsoDateFrom(undefined);
+    }
+    if (maxDate) {
+      setDateTo(formatISODateToUS(maxDate));
+      setAppliedIsoDateTo(maxDate);
+    } else {
+      setDateTo('');
+      setAppliedIsoDateTo(undefined);
+    }
     setAppliedSearchTerm('');
-    setAppliedIsoDateFrom(undefined);
-    setAppliedIsoDateTo(undefined);
   };
 
   const toNextDay = (isoDate: string) => {
@@ -85,17 +95,51 @@ export default function Transactions() {
   };
 
   const {
-    data: preferredMinDate,
-    isLoading: isLoadingPreferredMinDate,
-    isError: isPreferredMinDateError,
+    data: preferredDateRange,
+    isLoading: isLoadingPreferredDateRange,
+    isError: isPreferredDateRangeError,
   } = useQuery({
-    queryKey: ['preferred-min-transaction-date'],
-    queryFn: fetchPreferredMinTransactionDate,
+    queryKey: ['preferred-transaction-date-range'],
+    queryFn: fetchPreferredDateRange,
     staleTime: 5 * 60 * 1000,
   });
 
-  const minDate = preferredMinDate ?? undefined;
-  const canRunQueries = !isLoadingPreferredMinDate || isPreferredMinDateError;
+  const minDate = preferredDateRange?.min ?? undefined;
+  const maxDate = preferredDateRange?.max ?? undefined;
+  const [defaultsApplied, setDefaultsApplied] = useState(false);
+
+  useEffect(() => {
+    if (!defaultsApplied && minDate) {
+      setDateFrom(formatISODateToUS(minDate));
+      setAppliedIsoDateFrom(minDate);
+    }
+    if (!defaultsApplied && maxDate) {
+      setDateTo(formatISODateToUS(maxDate));
+      setAppliedIsoDateTo(maxDate);
+    }
+    if (!defaultsApplied && (minDate || maxDate)) {
+      setDefaultsApplied(true);
+    }
+  }, [defaultsApplied, minDate, maxDate]);
+
+  const effectiveStartDate = useMemo(() => {
+    if (minDate && appliedIsoDateFrom) {
+      return appliedIsoDateFrom < minDate ? minDate : appliedIsoDateFrom;
+    }
+    return appliedIsoDateFrom ?? minDate;
+  }, [minDate, appliedIsoDateFrom]);
+
+  const effectiveEndExclusive = useMemo(() => {
+    if (appliedIsoDateTo) {
+      return toNextDay(appliedIsoDateTo);
+    }
+    if (maxDate) {
+      return toNextDay(maxDate);
+    }
+    return undefined;
+  }, [appliedIsoDateTo, maxDate]);
+
+  const canRunQueries = !isLoadingPreferredDateRange || isPreferredDateRangeError;
 
   const {
     data,
@@ -104,7 +148,7 @@ export default function Transactions() {
     isFetchingNextPage,
     isLoading,
   } = useInfiniteQuery<Transaction[]>({
-    queryKey: ['transactions', 'infinite', statusFilter, appliedSearchTerm, appliedIsoDateFrom, appliedIsoDateTo, minDate ?? null],
+    queryKey: ['transactions', 'infinite', statusFilter, appliedSearchTerm, effectiveStartDate ?? null, appliedIsoDateTo ?? null, minDate ?? null, maxDate ?? null],
     queryFn: async ({ pageParam = 0 }) => {
       const start = pageParam as number;
       const end = start + TRANSACTIONS_PER_PAGE - 1;
@@ -116,43 +160,37 @@ export default function Transactions() {
         .order('sheet_order', { ascending: false, nullsFirst: false })
         .order('date', { ascending: false });
 
-      if (minDate) {
-        query = query.gte('date', minDate);
+      if (effectiveStartDate) {
+        query = query.gte('date', effectiveStartDate);
       }
 
       if (statusFilter !== 'all') {
         query = query.eq('status', statusFilter);
       }
-      if (appliedIsoDateFrom) {
-        query = query.gte('date', appliedIsoDateFrom);
-      }
-      const endDateExclusive = appliedIsoDateTo ? toNextDay(appliedIsoDateTo) : undefined;
-      if (endDateExclusive) {
-        query = query.lt('date', endDateExclusive);
+      if (effectiveEndExclusive) {
+        query = query.lt('date', effectiveEndExclusive);
       }
 
       if (appliedSearchTerm) {
         const escapeForILike = (value: string) =>
           value.replace(/([%_\\])/g, '\\$1');
         const wildcard = `%${escapeForILike(appliedSearchTerm)}%`;
-        const orFilters = [
+        const orFilters = new Set<string>([
           `name.ilike.${wildcard}`,
           `depositor.ilike.${wildcard}`,
           `car.ilike.${wildcard}`,
           `historical_text.ilike.${wildcard}`,
           `source.ilike.${wildcard}`,
-          `value::text.ilike.${wildcard}`,
-        ];
+          `value.ilike.${wildcard}`,
+        ]);
 
         const numericSearch = appliedSearchTerm.replace(/[^\d.-]/g, '');
         if (numericSearch) {
           const numericWildcard = `%${escapeForILike(numericSearch)}%`;
-          if (!orFilters.includes(`value.ilike.${numericWildcard}`)) {
-            orFilters.push(`value.ilike.${numericWildcard}`);
-          }
+          orFilters.add(`value.ilike.${numericWildcard}`);
         }
 
-        query = query.or(orFilters.join(','));
+        query = query.or(Array.from(orFilters).join(','));
       }
 
       const { data, error } = await query.range(start, end);
@@ -172,20 +210,25 @@ export default function Transactions() {
   const allTransactions = data?.pages.flat() || [];
 
   const { data: counts } = useQuery({
-    queryKey: ['transaction-counts', minDate ?? null],
+    queryKey: ['transaction-counts', effectiveStartDate ?? null, appliedIsoDateTo ?? null, minDate ?? null, maxDate ?? null],
     staleTime: 30000,
     queryFn: async () => {
       const buildCountQuery = (status?: string) => {
         let query = supabase
-        .from('transactions')
-          .select('*', { count: 'exact', head: true });
+          .from('transactions')
+          .select('*', { count: 'exact', head: true })
+          .order('date', { ascending: false });
 
         if (status && status !== 'all') {
           query = query.eq('status', status);
         }
 
-        if (minDate) {
-          query = query.gte('date', minDate);
+        if (effectiveStartDate) {
+          query = query.gte('date', effectiveStartDate);
+        }
+
+        if (effectiveEndExclusive) {
+          query = query.lt('date', effectiveEndExclusive);
         }
 
         return query;
@@ -317,7 +360,7 @@ export default function Transactions() {
     };
   }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
-  if (isLoadingPreferredMinDate) {
+  if (isLoadingPreferredDateRange) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="text-muted-foreground">Loading transactions...</div>
