@@ -16,6 +16,7 @@ import {
   formatISODateToUS,
 } from '@/lib/utils';
 import { autoReconcileAll } from '@/lib/reconciliation';
+import { fetchPreferredMinTransactionDate } from '@/lib/transactionFilters';
 
 const TRANSACTIONS_PER_PAGE = 50;
 
@@ -84,22 +85,40 @@ export default function Transactions() {
   };
 
   const {
+    data: preferredMinDate,
+    isLoading: isLoadingPreferredMinDate,
+    isError: isPreferredMinDateError,
+  } = useQuery({
+    queryKey: ['preferred-min-transaction-date'],
+    queryFn: fetchPreferredMinTransactionDate,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const minDate = preferredMinDate ?? undefined;
+  const canRunQueries = !isLoadingPreferredMinDate || isPreferredMinDateError;
+
+  const {
     data,
     fetchNextPage,
     hasNextPage,
     isFetchingNextPage,
     isLoading,
   } = useInfiniteQuery<Transaction[]>({
-    queryKey: ['transactions', 'infinite', statusFilter, appliedSearchTerm, appliedIsoDateFrom, appliedIsoDateTo],
+    queryKey: ['transactions', 'infinite', statusFilter, appliedSearchTerm, appliedIsoDateFrom, appliedIsoDateTo, minDate ?? null],
     queryFn: async ({ pageParam = 0 }) => {
-      const MIN_DATE = '2024-05-01';
       const start = pageParam as number;
       const end = start + TRANSACTIONS_PER_PAGE - 1;
 
       let query = supabase
         .from('transactions')
         .select('*')
-        .gte('date', MIN_DATE);
+        .order('status', { ascending: true })
+        .order('sheet_order', { ascending: false, nullsFirst: false })
+        .order('date', { ascending: false });
+
+      if (minDate) {
+        query = query.gte('date', minDate);
+      }
 
       if (statusFilter !== 'all') {
         query = query.eq('status', statusFilter);
@@ -120,7 +139,9 @@ export default function Transactions() {
           `name.ilike.${wildcard}`,
           `depositor.ilike.${wildcard}`,
           `car.ilike.${wildcard}`,
-          `value.ilike.${wildcard}`,
+          `historical_text.ilike.${wildcard}`,
+          `source.ilike.${wildcard}`,
+          `value::text.ilike.${wildcard}`,
         ];
 
         const numericSearch = appliedSearchTerm.replace(/[^\d.-]/g, '');
@@ -134,11 +155,7 @@ export default function Transactions() {
         query = query.or(orFilters.join(','));
       }
 
-      const { data, error } = await query
-        .order('status', { ascending: true })
-        .order('sheet_order', { ascending: false, nullsFirst: false })
-        .order('date', { ascending: false })
-        .range(start, end);
+      const { data, error } = await query.range(start, end);
 
       if (error) throw error;
       return data || [];
@@ -149,38 +166,35 @@ export default function Transactions() {
     },
     initialPageParam: 0,
     staleTime: 30000,
+    enabled: canRunQueries,
   });
 
   const allTransactions = data?.pages.flat() || [];
 
   const { data: counts } = useQuery({
-    queryKey: ['transaction-counts'],
+    queryKey: ['transaction-counts', minDate ?? null],
     staleTime: 30000,
     queryFn: async () => {
-      const MIN_DATE = '2024-05-01';
-
-      const { count: totalCount, error: totalError } = await supabase
+      const buildCountQuery = (status?: string) => {
+        let query = supabase
         .from('transactions')
-        .select('*', { count: 'exact', head: true })
-        .gte('date', MIN_DATE);
+          .select('*', { count: 'exact', head: true });
 
-      const { count: reconciledCount, error: reconciledError } = await supabase
-        .from('transactions')
-        .select('*', { count: 'exact', head: true })
-        .eq('status', 'reconciled')
-        .gte('date', MIN_DATE);
+        if (status && status !== 'all') {
+          query = query.eq('status', status);
+        }
 
-      const { count: pendingLedgerCount, error: pendingLedgerError } = await supabase
-        .from('transactions')
-        .select('*', { count: 'exact', head: true })
-        .eq('status', 'pending-ledger')
-        .gte('date', MIN_DATE);
+        if (minDate) {
+          query = query.gte('date', minDate);
+        }
 
-      const { count: pendingStatementCount, error: pendingStatementError } = await supabase
-        .from('transactions')
-        .select('*', { count: 'exact', head: true })
-        .eq('status', 'pending-statement')
-        .gte('date', MIN_DATE);
+        return query;
+      };
+
+      const { count: totalCount, error: totalError } = await buildCountQuery();
+      const { count: reconciledCount, error: reconciledError } = await buildCountQuery('reconciled');
+      const { count: pendingLedgerCount, error: pendingLedgerError } = await buildCountQuery('pending-ledger');
+      const { count: pendingStatementCount, error: pendingStatementError } = await buildCountQuery('pending-statement');
 
       if (totalError || reconciledError || pendingLedgerError || pendingStatementError) {
         throw totalError || reconciledError || pendingLedgerError || pendingStatementError;
@@ -193,6 +207,7 @@ export default function Transactions() {
         'pending-statement': pendingStatementCount || 0,
       };
     },
+    enabled: canRunQueries,
   });
 
   const filteredTransactions = useMemo(() => allTransactions, [allTransactions]);
@@ -301,6 +316,14 @@ export default function Transactions() {
       }
     };
   }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
+
+  if (isLoadingPreferredMinDate) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-muted-foreground">Loading transactions...</div>
+      </div>
+    );
+  }
 
   if (isLoading) {
     return (
