@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
-import { useState, useEffect, useRef, useMemo, type RefObject } from 'react';
+import { useState, useRef, useMemo, type RefObject } from 'react';
 import { supabase } from '@/lib/supabase';
 import type { Transaction, ReconciliationStatus } from '@/lib/database.types';
 import { queryClient } from '@/lib/queryClient';
@@ -16,7 +16,7 @@ import {
   formatISODateToUS,
 } from '@/lib/utils';
 import { autoReconcileAll } from '@/lib/reconciliation';
-import { fetchPreferredDateRange } from '@/lib/transactionFilters';
+import { fetchPreferredMinTransactionDate } from '@/lib/transactionFilters';
 
 const TRANSACTIONS_PER_PAGE = 50;
 
@@ -69,21 +69,11 @@ export default function KingdomTransactions() {
 
   const handleClearFilters = () => {
     setSearchTerm('');
-    if (minDate) {
-      setDateFrom(formatISODateToUS(minDate));
-      setAppliedIsoDateFrom(minDate);
-    } else {
-      setDateFrom('');
-      setAppliedIsoDateFrom(undefined);
-    }
-    if (maxDate) {
-      setDateTo(formatISODateToUS(maxDate));
-      setAppliedIsoDateTo(maxDate);
-    } else {
-      setDateTo('');
-      setAppliedIsoDateTo(undefined);
-    }
+    setDateFrom('');
+    setDateTo('');
     setAppliedSearchTerm('');
+    setAppliedIsoDateFrom(undefined);
+    setAppliedIsoDateTo(undefined);
   };
 
   const toNextDay = (isoDate: string) => {
@@ -94,51 +84,29 @@ export default function KingdomTransactions() {
   };
 
   const {
-    data: preferredDateRange,
-    isLoading: isLoadingPreferredDateRange,
-    isError: isPreferredDateRangeError,
+    data: preferredMinDate,
+    isLoading: isLoadingPreferredMinDate,
+    isError: isPreferredMinDateError,
   } = useQuery({
-    queryKey: ['preferred-transaction-date-range'],
-    queryFn: fetchPreferredDateRange,
+    queryKey: ['preferred-min-transaction-date'],
+    queryFn: fetchPreferredMinTransactionDate,
     staleTime: 5 * 60 * 1000,
   });
 
-  const minDate = preferredDateRange?.min ?? undefined;
-  const maxDate = preferredDateRange?.max ?? undefined;
-  const [defaultsApplied, setDefaultsApplied] = useState(false);
-
-  useEffect(() => {
-    if (!defaultsApplied && minDate) {
-      setDateFrom(formatISODateToUS(minDate));
-      setAppliedIsoDateFrom(minDate);
-    }
-    if (!defaultsApplied && maxDate) {
-      setDateTo(formatISODateToUS(maxDate));
-      setAppliedIsoDateTo(maxDate);
-    }
-    if (!defaultsApplied && (minDate || maxDate)) {
-      setDefaultsApplied(true);
-    }
-  }, [defaultsApplied, minDate, maxDate]);
+  const minDate = preferredMinDate ?? undefined;
 
   const effectiveStartDate = useMemo(() => {
-    if (minDate && appliedIsoDateFrom) {
-      return appliedIsoDateFrom < minDate ? minDate : appliedIsoDateFrom;
-    }
-    return appliedIsoDateFrom ?? minDate;
-  }, [minDate, appliedIsoDateFrom]);
+    if (!appliedIsoDateFrom) return undefined;
+    if (!minDate) return appliedIsoDateFrom;
+    return appliedIsoDateFrom < minDate ? minDate : appliedIsoDateFrom;
+  }, [appliedIsoDateFrom, minDate]);
 
   const effectiveEndExclusive = useMemo(() => {
-    if (appliedIsoDateTo) {
-      return toNextDay(appliedIsoDateTo);
-    }
-    if (maxDate) {
-      return toNextDay(maxDate);
-    }
-    return undefined;
-  }, [appliedIsoDateTo, maxDate]);
+    if (!appliedIsoDateTo) return undefined;
+    return toNextDay(appliedIsoDateTo);
+  }, [appliedIsoDateTo]);
 
-  const canRunQueries = !isLoadingPreferredDateRange || isPreferredDateRangeError;
+  const canRunQueries = !isLoadingPreferredMinDate || isPreferredMinDateError;
 
   const {
     data,
@@ -147,7 +115,7 @@ export default function KingdomTransactions() {
     isFetchingNextPage,
     isLoading,
   } = useInfiniteQuery<Transaction[]>({
-    queryKey: ['kingdom-transactions', 'infinite', statusFilter, appliedSearchTerm, effectiveStartDate ?? null, appliedIsoDateTo ?? null, minDate ?? null, maxDate ?? null],
+    queryKey: ['kingdom-transactions', 'infinite', statusFilter, appliedSearchTerm, effectiveStartDate ?? null, appliedIsoDateTo ?? null, minDate ?? null],
     queryFn: async ({ pageParam = 0 }) => {
       const start = pageParam as number;
       const end = start + TRANSACTIONS_PER_PAGE - 1;
@@ -182,13 +150,13 @@ export default function KingdomTransactions() {
           `car.ilike.${wildcard}`,
           `historical_text.ilike.${wildcard}`,
           `source.ilike.${wildcard}`,
-          `value.ilike.${wildcard}`,
+          `value::text.ilike.${wildcard}`,
         ]);
 
         const numericSearch = appliedSearchTerm.replace(/[^\d.-]/g, '');
         if (numericSearch) {
           const numericWildcard = `%${escapeForILike(numericSearch)}%`;
-          orFilters.add(`value.ilike.${numericWildcard}`);
+          orFilters.add(`value::text.ilike.${numericWildcard}`);
         }
 
         query = query.or(Array.from(orFilters).join(','));
@@ -211,14 +179,13 @@ export default function KingdomTransactions() {
   const allTransactions = data?.pages.flat() || [];
 
   const { data: counts } = useQuery({
-    queryKey: ['kingdom-transaction-counts', effectiveStartDate ?? null, appliedIsoDateTo ?? null, minDate ?? null, maxDate ?? null],
+    queryKey: ['kingdom-transaction-counts', effectiveStartDate ?? null, appliedIsoDateTo ?? null, minDate ?? null],
     staleTime: 30000,
     queryFn: async () => {
       const buildCountQuery = (status?: string) => {
         let query = supabase
           .from('transactions')
-          .select('*', { count: 'exact', head: true })
-          .order('date', { ascending: false });
+          .select('*', { count: 'exact', head: true });
 
         if (status === 'kingdom') {
           query = query.ilike('source', 'Kingdom System%');
@@ -373,7 +340,7 @@ export default function KingdomTransactions() {
     );
   }
 
-  if (isLoadingPreferredDateRange) {
+  if (isLoadingPreferredMinDate) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="text-muted-foreground">Loading transactions...</div>
