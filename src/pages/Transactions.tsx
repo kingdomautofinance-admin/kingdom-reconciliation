@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
-import { useState, useRef, useMemo, type RefObject } from 'react';
+import { useState, useRef, useMemo, useEffect, type RefObject } from 'react';
 import { supabase } from '@/lib/supabase';
 import type { Transaction, ReconciliationStatus } from '@/lib/database.types';
 import { queryClient } from '@/lib/queryClient';
@@ -143,22 +143,23 @@ export default function Transactions() {
         const escapeForILike = (value: string) =>
           value.replace(/([%_\\])/g, '\\$1');
         const wildcard = `%${escapeForILike(appliedSearchTerm)}%`;
-        const orFilters = new Set<string>([
+        const orFilters = [
           `name.ilike.${wildcard}`,
           `depositor.ilike.${wildcard}`,
           `car.ilike.${wildcard}`,
           `historical_text.ilike.${wildcard}`,
           `source.ilike.${wildcard}`,
-          `value::text.ilike.${wildcard}`,
-        ]);
+        ];
 
         const numericSearch = appliedSearchTerm.replace(/[^\d.-]/g, '');
         if (numericSearch) {
           const numericWildcard = `%${escapeForILike(numericSearch)}%`;
-          orFilters.add(`value::text.ilike.${numericWildcard}`);
+          orFilters.push(`value::TEXT.ilike.${numericWildcard}`);
+        } else {
+          orFilters.push(`value::TEXT.ilike.${wildcard}`);
         }
 
-        query = query.or(Array.from(orFilters).join(','));
+        query = query.or(orFilters.join(','));
       }
 
       const { data, error } = await query.range(start, end);
