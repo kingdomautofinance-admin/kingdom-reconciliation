@@ -680,7 +680,7 @@ export default function KingdomTransactions() {
             onRequestDelete={(t) => {
               setDeleteDialog({ transaction: t, mode: 'delete' });
               setDeleteReasonInput('');
-            })}
+            }}
             onViewDelete={(t) => {
               setDeleteDialog({ transaction: t, mode: 'view' });
               setDeleteReasonInput(t.deleted_reason ?? '');
