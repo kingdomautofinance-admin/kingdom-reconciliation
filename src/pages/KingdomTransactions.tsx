@@ -232,27 +232,17 @@ export default function KingdomTransactions() {
 
   const filteredTransactions = useMemo(() => allTransactions, [allTransactions]);
 
-  const { activeTotal, deletedTotal } = useMemo(() => {
-    return filteredTransactions.reduce(
-      (totals, transaction) => {
-        const rawValue = transaction.value;
-        const numeric = typeof rawValue === 'number'
-          ? rawValue
-          : parseFloat((rawValue ?? '0').toString().replace(/[^\d.-]/g, ''));
-
-        if (Number.isNaN(numeric)) {
-          return totals;
-        }
-
-        if (transaction.status === 'deleted') {
-          totals.deletedTotal += numeric;
-        } else {
-          totals.activeTotal += numeric;
-        }
-        return totals;
-      },
-      { activeTotal: 0, deletedTotal: 0 }
-    );
+  const filteredTotal = useMemo(() => {
+    return filteredTransactions.reduce((sum, transaction) => {
+      const rawValue = transaction.value;
+      const numeric = typeof rawValue === 'number'
+        ? rawValue
+        : parseFloat((rawValue ?? '0').toString().replace(/[^\d.-]/g, ''));
+      if (Number.isNaN(numeric)) {
+        return sum;
+      }
+      return sum + numeric;
+    }, 0);
   }, [filteredTransactions]);
 
   const manualReconcileMutation = useMutation({
@@ -709,12 +699,8 @@ export default function KingdomTransactions() {
         <div className="text-muted-foreground">
           Showing {filteredTransactions.length} transactions
         </div>
-        <div className="text-muted-foreground">
-          Total (excluding deleted): {formatCurrency(activeTotal)}
-        </div>
-        <div className="text-xs text-muted-foreground">
-          Deleted total excluded: {formatCurrency(deletedTotal)}
-        </div>
+      <div className="text-muted-foreground">
+        Total of transactions: {formatCurrency(filteredTotal)}
       </div>
     </div>
 

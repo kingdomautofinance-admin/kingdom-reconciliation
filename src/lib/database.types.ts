@@ -19,7 +19,7 @@ export interface Database {
           duplicates_skipped: number
           import_started_at: string
           import_completed_at: string | null
-          status: 'pending-ledger' | 'pending-statement' | 'reconciled' | 'deleted'
+          status: string
           error_message: string | null
           created_at: string
         }
@@ -32,7 +32,7 @@ export interface Database {
           duplicates_skipped?: number
           import_started_at?: string
           import_completed_at?: string | null
-          status?: 'pending-ledger' | 'pending-statement' | 'reconciled' | 'deleted'
+          status?: string
           error_message?: string | null
           created_at?: string
         }
@@ -45,7 +45,7 @@ export interface Database {
           duplicates_skipped?: number
           import_started_at?: string
           import_completed_at?: string | null
-          status?: 'pending-ledger' | 'pending-statement' | 'reconciled' | 'deleted'
+          status?: string
           error_message?: string | null
           created_at?: string
         }
