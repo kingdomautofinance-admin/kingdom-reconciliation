@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
-import { useState, useRef, useMemo, useEffect, type RefObject, type FormEvent } from 'react';
+import { useState, useRef, useMemo, useEffect, type RefObject } from 'react';
 import { supabase } from '@/lib/supabase';
 import type { Transaction, ReconciliationStatus } from '@/lib/database.types';
 import { queryClient } from '@/lib/queryClient';
@@ -7,7 +7,7 @@ import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Eye, Search, CheckCircle2, Loader2, Link2, Calendar, Trash2, Plus, Undo2 } from 'lucide-react';
+import { Eye, Search, CheckCircle2, Loader2, Link2, Calendar } from 'lucide-react';
 import {
   formatDate,
   formatCurrency,
@@ -24,8 +24,6 @@ export default function Transactions() {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<ReconciliationStatus | 'all'>('all');
   const [selectedForMatch, setSelectedForMatch] = useState<Transaction | null>(null);
-  const [deleteDialog, setDeleteDialog] = useState<{ transaction: Transaction; mode: 'delete' | 'view' } | null>(null);
-  const [deleteReasonInput, setDeleteReasonInput] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const observerTarget = useRef<HTMLDivElement>(null);
@@ -208,10 +206,9 @@ export default function Transactions() {
       const { count: reconciledCount, error: reconciledError } = await buildCountQuery('reconciled');
       const { count: pendingLedgerCount, error: pendingLedgerError } = await buildCountQuery('pending-ledger');
       const { count: pendingStatementCount, error: pendingStatementError } = await buildCountQuery('pending-statement');
-      const { count: deletedCount, error: deletedError } = await buildCountQuery('deleted');
 
-      if (totalError || reconciledError || pendingLedgerError || pendingStatementError || deletedError) {
-        throw totalError || reconciledError || pendingLedgerError || pendingStatementError || deletedError;
+      if (totalError || reconciledError || pendingLedgerError || pendingStatementError) {
+        throw totalError || reconciledError || pendingLedgerError || pendingStatementError;
       }
 
       return {
@@ -219,7 +216,6 @@ export default function Transactions() {
         reconciled: reconciledCount || 0,
         'pending-ledger': pendingLedgerCount || 0,
         'pending-statement': pendingStatementCount || 0,
-        deleted: deletedCount || 0,
       };
     },
     enabled: canRunQueries,
@@ -309,83 +305,6 @@ export default function Transactions() {
       console.error('Auto reconcile error:', error);
     },
   });
-
-  const deleteTransactionMutation = useMutation({
-    mutationFn: async ({ transactionId, reason }: { transactionId: string; reason: string }) => {
-      const { error } = await supabase
-        .from('transactions')
-        .update({
-          status: 'deleted',
-          deleted_reason: reason,
-          matched_transaction_id: null,
-          confidence: null,
-        })
-        .eq('id', transactionId);
-
-      if (error) throw error;
-      return { transactionId, reason };
-    },
-    onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ['transactions'] });
-      queryClient.invalidateQueries({ queryKey: ['transaction-counts'] });
-      setDeleteDialog(null);
-      setDeleteReasonInput('');
-      if (selectedForMatch?.id === variables.transactionId) {
-        setSelectedForMatch(null);
-      }
-      alert('✅ Transaction deleted.');
-    },
-    onError: (error) => {
-      alert(`❌ Failed to delete transaction\n\n${error.message}`);
-      console.error('Delete transaction error:', error);
-    },
-  });
-
-  const revertTransactionMutation = useMutation({
-    mutationFn: async ({ transactionId }: { transactionId: string }) => {
-      const { error } = await supabase
-        .from('transactions')
-        .update({
-          status: 'pending-ledger',
-          deleted_reason: null,
-          matched_transaction_id: null,
-          confidence: null,
-        })
-        .eq('id', transactionId);
-
-      if (error) throw error;
-      return { transactionId };
-    },
-    onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ['transactions'] });
-      queryClient.invalidateQueries({ queryKey: ['transaction-counts'] });
-      if (deleteDialog?.transaction.id === variables.transactionId) {
-        setDeleteDialog(null);
-        setDeleteReasonInput('');
-      }
-      alert('✅ Transaction restored to pending-ledger.');
-    },
-    onError: (error) => {
-      alert(`❌ Failed to restore transaction\n\n${error.message}`);
-      console.error('Restore transaction error:', error);
-    },
-  });
-
-  const closeDeleteDialog = () => {
-    setDeleteDialog(null);
-    setDeleteReasonInput('');
-  };
-
-  const handleDeleteSubmit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!deleteDialog?.transaction) return;
-    const trimmed = deleteReasonInput.trim();
-    if (!trimmed) return;
-    deleteTransactionMutation.mutate({
-      transactionId: deleteDialog.transaction.id,
-      reason: trimmed,
-    });
-  };
 
   useEffect(() => {
     const observer = new IntersectionObserver(
@@ -581,13 +500,6 @@ export default function Transactions() {
         >
           Zelle/Credit Card {counts && <span className="ml-1.5 text-xs opacity-70">({counts['pending-statement']})</span>}
         </Button>
-        <Button
-          variant={statusFilter === 'deleted' ? 'default' : 'outline'}
-          onClick={() => handleStatusFilterChange('deleted')}
-          size="sm"
-        >
-          Deleted {counts && <span className="ml-1.5 text-xs opacity-70">({counts.deleted})</span>}
-        </Button>
       </div>
 
       {selectedForMatch && (
@@ -650,27 +562,6 @@ export default function Transactions() {
             onManualMatch={(t2) => manualReconcileMutation.mutate({ transaction1: selectedForMatch!, transaction2: t2 })}
             isMatchInProgress={manualReconcileMutation.isPending}
             allTransactions={filteredTransactions}
-            onRequestDelete={(t) => {
-              setDeleteDialog({ transaction: t, mode: 'delete' });
-              setDeleteReasonInput('');
-            })}
-            onViewDelete={(t) => {
-              setDeleteDialog({ transaction: t, mode: 'view' });
-              setDeleteReasonInput(t.deleted_reason ?? '');
-            })}
-            onRevertDelete={(t) => {
-              if (window.confirm('Restore this transaction to pending-ledger status?')) {
-                revertTransactionMutation.mutate({ transactionId: t.id });
-              }
-            }}
-            isDeleteInProgress={
-              deleteTransactionMutation.isPending &&
-              deleteTransactionMutation.variables?.transactionId === transaction.id
-            }
-            isRevertInProgress={
-              revertTransactionMutation.isPending &&
-              revertTransactionMutation.variables?.transactionId === transaction.id
-            }
           />
         ))}
       </div>
@@ -682,78 +573,12 @@ export default function Transactions() {
         <div className="text-muted-foreground">
           Showing {filteredTransactions.length} transactions
         </div>
-      <div className="text-muted-foreground">
-        Total of transactions: {formatCurrency(filteredTotal)}
-      </div>
-    </div>
-
-    {deleteDialog && (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
-        <div className="w-full max-w-md space-y-4 rounded-lg bg-white p-6 shadow-lg dark:bg-slate-900">
-          <div className="space-y-1">
-            <h2 className="text-lg font-semibold">
-              {deleteDialog.mode === 'delete' ? 'Delete transaction' : 'Deletion reason'}
-            </h2>
-            <p className="text-sm text-muted-foreground">
-              {deleteDialog.mode === 'delete'
-                ? 'Explain why this transaction should be deleted. This note will be visible later.'
-                : 'This transaction was deleted with the following note:'}
-            </p>
-          </div>
-
-          {deleteDialog.mode === 'delete' ? (
-            <form onSubmit={handleDeleteSubmit} className="space-y-4">
-              <textarea
-                className="w-full min-h-[120px] rounded-md border border-gray-300 bg-white p-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-slate-700 dark:bg-slate-950"
-                value={deleteReasonInput}
-                onChange={(event) => setDeleteReasonInput(event.target.value)}
-                placeholder="Describe the reason for deleting this transaction..."
-                required
-                disabled={deleteTransactionMutation.isPending}
-              />
-              <div className="flex justify-end gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={closeDeleteDialog}
-                  disabled={deleteTransactionMutation.isPending}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  type="submit"
-                  disabled={deleteTransactionMutation.isPending || deleteReasonInput.trim() === ''}
-                >
-                  {deleteTransactionMutation.isPending ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Deleting...
-                    </>
-                  ) : (
-                    'Delete'
-                  )}
-                </Button>
-              </div>
-            </form>
-          ) : (
-            <>
-              <div className="rounded-md border border-gray-200 bg-gray-50 p-3 text-sm dark:border-slate-700 dark:bg-slate-950">
-                {deleteDialog.transaction.deleted_reason?.trim()
-                  ? deleteDialog.transaction.deleted_reason
-                  : 'No reason was provided.'}
-              </div>
-              <div className="flex justify-end">
-                <Button variant="outline" onClick={closeDeleteDialog}>
-                  Close
-                </Button>
-              </div>
-            </>
-          )}
+        <div className="text-muted-foreground">
+          Total of transactions: {formatCurrency(filteredTotal)}
         </div>
       </div>
-    )}
-  </div>
-);
+    </div>
+  );
 }
 
 function TransactionCard({
@@ -763,11 +588,6 @@ function TransactionCard({
   onManualMatch,
   isMatchInProgress,
   allTransactions,
-  onRequestDelete,
-  onViewDelete,
-  onRevertDelete,
-  isDeleteInProgress,
-  isRevertInProgress,
 }: {
   transaction: Transaction;
   selectedForMatch: Transaction | null;
@@ -775,14 +595,8 @@ function TransactionCard({
   onManualMatch: (transaction: Transaction) => void;
   isMatchInProgress: boolean;
   allTransactions: Transaction[];
-  onRequestDelete: (transaction: Transaction) => void;
-  onViewDelete: (transaction: Transaction) => void;
-  onRevertDelete: (transaction: Transaction) => void;
-  isDeleteInProgress: boolean;
-  isRevertInProgress: boolean;
 }) {
   const [showMatch, setShowMatch] = useState(false);
-  void allTransactions;
 
   const { data: matchedTransaction } = useQuery<Transaction | null>({
     queryKey: ['transaction', 'match', transaction.matched_transaction_id],
@@ -805,8 +619,7 @@ function TransactionCard({
     reconciled: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200',
     'pending-ledger': 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',
     'pending-statement': 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200',
-    deleted: 'bg-gray-200 text-gray-800 dark:bg-gray-800 dark:text-gray-200',
-  } as const;
+  };
 
   const getConfidenceColor = (confidence: number | null) => {
     if (!confidence) return 'bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200';
@@ -816,7 +629,7 @@ function TransactionCard({
   };
 
   return (
-    <Card className={`p-4 ${transaction.status === 'deleted' ? 'opacity-50' : ''}`}>
+    <Card className="p-4">
       <div className="space-y-3">
         <div className="flex items-center justify-between gap-4">
           <div className="flex-1 grid grid-cols-7 gap-4">
@@ -862,12 +675,7 @@ function TransactionCard({
 
             <div>
               <div className="text-sm text-muted-foreground">Status</div>
-              <Badge
-                className={
-                  statusColors[transaction.status as keyof typeof statusColors] ??
-                  'bg-gray-200 text-gray-800 dark:bg-gray-800 dark:text-gray-200'
-                }
-              >
+              <Badge className={statusColors[transaction.status as keyof typeof statusColors]}>
                 {transaction.status}
               </Badge>
             </div>
@@ -885,7 +693,7 @@ function TransactionCard({
           </div>
 
           <div className="flex gap-2">
-            {transaction.status !== 'reconciled' && transaction.status !== 'deleted' && (
+            {transaction.status !== 'reconciled' && (
               <Button
                 size="icon"
                 variant={selectedForMatch?.id === transaction.id ? 'default' : 'outline'}
@@ -898,59 +706,13 @@ function TransactionCard({
                     onSelectForMatch(transaction);
                   }
                 }}
-                disabled={
-                  isMatchInProgress ||
-                  isDeleteInProgress ||
-                  (selectedForMatch !== null &&
-                    selectedForMatch.id !== transaction.id &&
-                    selectedForMatch.source === transaction.source)
-                }
+                disabled={isMatchInProgress || (selectedForMatch !== null && selectedForMatch.id !== transaction.id && (selectedForMatch.source === transaction.source))}
                 title={selectedForMatch?.id === transaction.id ? 'Cancel selection' : selectedForMatch ? 'Match with selected' : 'Select for matching'}
               >
                 {isMatchInProgress && selectedForMatch?.id === transaction.id ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
                   <Link2 className="h-4 w-4" />
-                )}
-              </Button>
-            )}
-            {transaction.status !== 'reconciled' && transaction.status !== 'deleted' && (
-              <Button
-                size="icon"
-                variant="outline"
-                onClick={() => onRequestDelete(transaction)}
-                disabled={isDeleteInProgress}
-                title="Delete transaction"
-              >
-                {isDeleteInProgress ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Trash2 className="h-4 w-4" />
-                )}
-              </Button>
-            )}
-            {transaction.status === 'deleted' && (
-              <Button
-                size="icon"
-                variant="outline"
-                onClick={() => onViewDelete(transaction)}
-                title="View deletion reason"
-              >
-                <Plus className="h-4 w-4" />
-              </Button>
-            )}
-            {transaction.status === 'deleted' && (
-              <Button
-                size="icon"
-                variant="outline"
-                onClick={() => onRevertDelete(transaction)}
-                disabled={isRevertInProgress}
-                title="Restore transaction"
-              >
-                {isRevertInProgress ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Undo2 className="h-4 w-4" />
                 )}
               </Button>
             )}

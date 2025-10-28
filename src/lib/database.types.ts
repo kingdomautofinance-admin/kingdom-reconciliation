@@ -114,7 +114,6 @@ export interface Database {
           sheet_order: number | null
           duplicate_check_hash: string | null
           created_at: string
-          deleted_reason: string | null
         }
         Insert: {
           id?: string
@@ -132,7 +131,6 @@ export interface Database {
           sheet_order?: number | null
           duplicate_check_hash?: string | null
           created_at?: string
-          deleted_reason?: string | null
         }
         Update: {
           id?: string
@@ -150,7 +148,6 @@ export interface Database {
           sheet_order?: number | null
           duplicate_check_hash?: string | null
           created_at?: string
-          deleted_reason?: string | null
         }
       }
     }
@@ -169,4 +166,4 @@ export type Transaction = Database['public']['Tables']['transactions']['Row'];
 export type InsertTransaction = Database['public']['Tables']['transactions']['Insert'];
 export type UpdateTransaction = Database['public']['Tables']['transactions']['Update'];
 
-export type ReconciliationStatus = 'reconciled' | 'pending-ledger' | 'pending-statement' | 'deleted';
+export type ReconciliationStatus = 'reconciled' | 'pending-ledger' | 'pending-statement';
