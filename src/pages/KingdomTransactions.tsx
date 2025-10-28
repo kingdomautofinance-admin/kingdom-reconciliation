@@ -684,7 +684,7 @@ export default function KingdomTransactions() {
             onViewDelete={(t) => {
               setDeleteDialog({ transaction: t, mode: 'view' });
               setDeleteReasonInput(t.deleted_reason ?? '');
-            }}
+            })}
             onRevertDelete={(t) => {
               if (window.confirm('Restore this transaction to pending-ledger status?')) {
                 revertTransactionMutation.mutate({ transactionId: t.id });
