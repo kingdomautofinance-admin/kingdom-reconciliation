@@ -5,7 +5,8 @@ import Dashboard from './pages/Dashboard';
 import Transactions from './pages/Transactions';
 import KingdomTransactions from './pages/KingdomTransactions';
 import Upload from './pages/Upload';
-import { LayoutDashboard, List, Upload as UploadIcon, Moon, Sun, Crown } from 'lucide-react';
+import Reports from './pages/Reports';
+import { LayoutDashboard, List, Upload as UploadIcon, Moon, Sun, Crown, BarChart3 } from 'lucide-react';
 import { useTheme } from './lib/useTheme';
 import { Button } from './components/ui/button';
 
@@ -25,6 +26,9 @@ function App() {
                 <div className="hidden sm:ml-6 sm:flex sm:space-x-8">
                   <NavLink href="/" icon={<LayoutDashboard className="h-4 w-4" />}>
                     Dashboard
+                  </NavLink>
+                  <NavLink href="/reports" icon={<BarChart3 className="h-4 w-4" />}>
+                    Reports
                   </NavLink>
                   <NavLink href="/transactions" icon={<List className="h-4 w-4" />}>
                     Transactions Sheets
@@ -58,6 +62,7 @@ function App() {
         <main className="mx-auto px-6 sm:px-8 lg:px-12 py-8">
           <Switch>
             <Route path="/" component={Dashboard} />
+            <Route path="/reports" component={Reports} />
             <Route path="/transactions" component={Transactions} />
             <Route path="/kingdom" component={KingdomTransactions} />
             <Route path="/upload" component={Upload} />

@@ -1,5 +1,6 @@
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
 import { useState, useRef, useMemo, useEffect, type RefObject } from 'react';
+import { useLocation } from 'wouter';
 import { supabase } from '@/lib/supabase';
 import type { Transaction, ReconciliationStatus } from '@/lib/database.types';
 import { queryClient } from '@/lib/queryClient';
@@ -22,11 +23,22 @@ import { DeleteTransactionModal } from '@/components/DeleteTransactionModal';
 const TRANSACTIONS_PER_PAGE = 50;
 
 export default function Transactions() {
+  const [location] = useLocation();
+  
+  // Parse URL query parameters for date filtering
+  const urlParams = useMemo(() => {
+    const params = new URLSearchParams(location.split('?')[1] || '');
+    return {
+      dateFrom: params.get('dateFrom') || '',
+      dateTo: params.get('dateTo') || '',
+    };
+  }, [location]);
+
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<ReconciliationStatus | 'all' | 'deleted'>('all');
   const [selectedForMatch, setSelectedForMatch] = useState<Transaction | null>(null);
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
+  const [dateFrom, setDateFrom] = useState(urlParams.dateFrom);
+  const [dateTo, setDateTo] = useState(urlParams.dateTo);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [deleteModalMode, setDeleteModalMode] = useState<'delete' | 'view'>('delete');
   const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
@@ -65,6 +77,14 @@ export default function Transactions() {
     pendingIsoDateTo !== appliedIsoDateTo;
 
   const hasActiveFilters = Boolean(appliedSearchTerm || appliedIsoDateFrom || appliedIsoDateTo);
+
+  // Auto-apply filters if URL parameters are present
+  useEffect(() => {
+    if (urlParams.dateFrom || urlParams.dateTo) {
+      setAppliedIsoDateFrom(normalizeDateInput(urlParams.dateFrom));
+      setAppliedIsoDateTo(normalizeDateInput(urlParams.dateTo));
+    }
+  }, [urlParams.dateFrom, urlParams.dateTo]);
 
   const handleApplyFilters = () => {
     setAppliedSearchTerm(normalizedSearchInput);
