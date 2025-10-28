@@ -178,7 +178,8 @@ export default function Reports() {
   const handleDateClick = (date: string) => {
     // Format date as MM/DD/YYYY for the transaction page filter
     const formattedDate = formatISODateToUS(date);
-    setLocation(`/transactions?dateFrom=${encodeURIComponent(formattedDate)}&dateTo=${encodeURIComponent(formattedDate)}`);
+    // Navigate and the useEffect in Transactions.tsx will auto-apply the filters
+    setLocation(`/transactions?dateFrom=${formattedDate}&dateTo=${formattedDate}`);
   };
 
   if (isLoading) {
@@ -351,9 +352,11 @@ function DateSummaryCard({ summary, onClick }: { summary: DateSummary; onClick: 
   };
 
   const getChartColors = (percentage: number) => {
-    if (percentage === 100) return { fill: '#16a34a', empty: '#dcfce7' };
-    if (percentage >= 80) return { fill: '#ca8a04', empty: '#fef9c3' };
-    return { fill: '#ea580c', empty: '#fed7aa' };
+    if (percentage === 0) return { fill: '#d1d5db', empty: '#f3f4f6' }; // Light grey for 0%
+    if (percentage === 100) return { fill: '#16a34a', empty: '#dcfce7' }; // Dark green with light green bg
+    if (percentage >= 71) return { fill: '#22c55e', empty: '#ffffff' }; // Light green with white bg
+    if (percentage >= 41) return { fill: '#eab308', empty: '#fef9c3' }; // Yellow with light yellow bg
+    return { fill: '#ef4444', empty: '#fee2e2' }; // Red with light red bg (1-40%)
   };
 
   const chartColors = getChartColors(summary.reconciliation_percentage);
@@ -402,7 +405,7 @@ function DateSummaryCard({ summary, onClick }: { summary: DateSummary; onClick: 
         <div className="flex-1 min-w-[120px]">
           <p className="text-sm text-muted-foreground">Reconciled</p>
           <p className="font-semibold text-green-600 dark:text-green-400">
-            {summary.reconciled_count} txns
+            {summary.reconciled_count}
           </p>
           <p className="text-xs text-muted-foreground">
             {formatCurrency(summary.reconciled_amount)}
@@ -413,7 +416,7 @@ function DateSummaryCard({ summary, onClick }: { summary: DateSummary; onClick: 
         <div className="flex-1 min-w-[120px]">
           <p className="text-sm text-muted-foreground">Pending</p>
           <p className="font-semibold text-orange-600 dark:text-orange-400">
-            {summary.pending_count} txns
+            {summary.pending_count}
           </p>
           <p className="text-xs text-muted-foreground">
             {formatCurrency(summary.pending_amount)}
@@ -424,7 +427,7 @@ function DateSummaryCard({ summary, onClick }: { summary: DateSummary; onClick: 
         <div className="flex-1 min-w-[120px]">
           <p className="text-sm text-muted-foreground">Total</p>
           <p className="font-semibold">
-            {summary.total_count} txns
+            {summary.total_count}
           </p>
           <p className="text-xs text-muted-foreground">
             {formatCurrency(summary.total_amount)}
