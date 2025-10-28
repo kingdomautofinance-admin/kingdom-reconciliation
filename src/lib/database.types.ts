@@ -113,6 +113,9 @@ export interface Database {
           matched_transaction_id: string | null
           sheet_order: number | null
           duplicate_check_hash: string | null
+          is_deleted: boolean
+          deleted_reason: string | null
+          previous_status: string | null
           created_at: string
         }
         Insert: {
@@ -130,6 +133,9 @@ export interface Database {
           matched_transaction_id?: string | null
           sheet_order?: number | null
           duplicate_check_hash?: string | null
+          is_deleted?: boolean
+          deleted_reason?: string | null
+          previous_status?: string | null
           created_at?: string
         }
         Update: {
@@ -147,6 +153,9 @@ export interface Database {
           matched_transaction_id?: string | null
           sheet_order?: number | null
           duplicate_check_hash?: string | null
+          is_deleted?: boolean
+          deleted_reason?: string | null
+          previous_status?: string | null
           created_at?: string
         }
       }

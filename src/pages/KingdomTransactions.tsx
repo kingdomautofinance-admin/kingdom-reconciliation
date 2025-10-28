@@ -7,7 +7,7 @@ import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Eye, Search, CheckCircle2, Loader2, Link2, Calendar } from 'lucide-react';
+import { Eye, Search, CheckCircle2, Loader2, Link2, Calendar, Trash2 } from 'lucide-react';
 import {
   formatDate,
   formatCurrency,
@@ -17,15 +17,19 @@ import {
 } from '@/lib/utils';
 import { autoReconcileAll } from '@/lib/reconciliation';
 import { fetchPreferredMinTransactionDate } from '@/lib/transactionFilters';
+import { DeleteTransactionModal } from '@/components/DeleteTransactionModal';
 
 const TRANSACTIONS_PER_PAGE = 50;
 
 export default function KingdomTransactions() {
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState<ReconciliationStatus | 'all' | 'kingdom'>('all');
+  const [statusFilter, setStatusFilter] = useState<ReconciliationStatus | 'all' | 'kingdom' | 'deleted'>('all');
   const [selectedForMatch, setSelectedForMatch] = useState<Transaction | null>(null);
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [deleteModalMode, setDeleteModalMode] = useState<'delete' | 'view'>('delete');
+  const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
   const observerTarget = useRef<HTMLDivElement>(null);
   const dateFromPickerRef = useRef<HTMLInputElement>(null);
   const dateToPickerRef = useRef<HTMLInputElement>(null);
@@ -35,7 +39,7 @@ export default function KingdomTransactions() {
       input.showPicker();
     }
   };
-  const handleStatusFilterChange = (nextFilter: ReconciliationStatus | 'all' | 'kingdom') => {
+  const handleStatusFilterChange = (nextFilter: ReconciliationStatus | 'all' | 'kingdom' | 'deleted') => {
     setStatusFilter(nextFilter);
     void queryClient.invalidateQueries({ queryKey: ['kingdom-transactions', 'infinite'] });
     void queryClient.invalidateQueries({ queryKey: ['kingdom-transaction-counts'] });
@@ -130,10 +134,14 @@ export default function KingdomTransactions() {
         query = query.gte('date', effectiveStartDate);
       }
 
-      if (statusFilter === 'kingdom') {
-        query = query.ilike('source', 'Kingdom System%');
+      if (statusFilter === 'deleted') {
+        query = query.eq('is_deleted', true);
+      } else if (statusFilter === 'kingdom') {
+        query = query.ilike('source', 'Kingdom System%').eq('is_deleted', false);
       } else if (statusFilter !== 'all') {
-        query = query.eq('status', statusFilter);
+        query = query.eq('status', statusFilter).eq('is_deleted', false);
+      } else {
+        // For 'all', we don't filter by is_deleted to show everything
       }
 
       if (effectiveEndExclusive) {
@@ -189,9 +197,11 @@ export default function KingdomTransactions() {
           .select('*', { count: 'exact', head: true });
 
         if (status === 'kingdom') {
-          query = query.ilike('source', 'Kingdom System%');
+          query = query.ilike('source', 'Kingdom System%').eq('is_deleted', false);
         } else if (status && status !== 'all') {
-          query = query.eq('status', status);
+          query = query.eq('status', status).eq('is_deleted', false);
+        } else if (!status || status === 'all') {
+          query = query.eq('is_deleted', false);
         }
 
         if (effectiveStartDate) {
@@ -210,9 +220,24 @@ export default function KingdomTransactions() {
       const { count: pendingLedgerCount, error: pendingLedgerError } = await buildCountQuery('pending-ledger');
       const { count: pendingStatementCount, error: pendingStatementError } = await buildCountQuery('pending-statement');
       const { count: kingdomCount, error: kingdomError } = await buildCountQuery('kingdom');
+      
+      // Count deleted transactions separately
+      let deletedQuery = supabase
+        .from('transactions')
+        .select('*', { count: 'exact', head: true })
+        .eq('is_deleted', true);
+      
+      if (effectiveStartDate) {
+        deletedQuery = deletedQuery.gte('date', effectiveStartDate);
+      }
+      if (effectiveEndExclusive) {
+        deletedQuery = deletedQuery.lt('date', effectiveEndExclusive);
+      }
+      
+      const { count: deletedCount, error: deletedError } = await deletedQuery;
 
-      if (totalError || reconciledError || pendingLedgerError || pendingStatementError || kingdomError) {
-        throw totalError || reconciledError || pendingLedgerError || pendingStatementError || kingdomError;
+      if (totalError || reconciledError || pendingLedgerError || pendingStatementError || kingdomError || deletedError) {
+        throw totalError || reconciledError || pendingLedgerError || pendingStatementError || kingdomError || deletedError;
       }
 
       return {
@@ -221,6 +246,7 @@ export default function KingdomTransactions() {
         'pending-ledger': pendingLedgerCount || 0,
         'pending-statement': pendingStatementCount || 0,
         kingdom: kingdomCount || 0,
+        deleted: deletedCount || 0,
       };
     },
     enabled: canRunQueries,
@@ -230,6 +256,10 @@ export default function KingdomTransactions() {
 
   const filteredTotal = useMemo(() => {
     return filteredTransactions.reduce((sum, transaction) => {
+      // Exclude deleted transactions from totals unless viewing deleted filter
+      if (transaction.is_deleted && statusFilter !== 'deleted') {
+        return sum;
+      }
       const rawValue = transaction.value;
       const numeric = typeof rawValue === 'number'
         ? rawValue
@@ -239,7 +269,7 @@ export default function KingdomTransactions() {
       }
       return sum + numeric;
     }, 0);
-  }, [filteredTransactions]);
+  }, [filteredTransactions, statusFilter]);
 
   const manualReconcileMutation = useMutation({
     mutationFn: async ({ transaction1, transaction2 }: { transaction1: Transaction; transaction2: Transaction }) => {
@@ -276,6 +306,73 @@ export default function KingdomTransactions() {
     onError: (error) => {
       alert(`❌ Manual reconciliation failed\n\n${error.message}`);
       console.error('Manual reconcile error:', error);
+    },
+  });
+
+  const deleteTransactionMutation = useMutation({
+    mutationFn: async ({ transactionId, reason }: { transactionId: string; reason: string }) => {
+      // First, get the current status to store it
+      const { data: currentTransaction, error: fetchError } = await supabase
+        .from('transactions')
+        .select('status')
+        .eq('id', transactionId)
+        .single();
+
+      if (fetchError) throw fetchError;
+
+      const { error } = await supabase
+        .from('transactions')
+        .update({
+          is_deleted: true,
+          deleted_reason: reason,
+          previous_status: currentTransaction.status,
+        })
+        .eq('id', transactionId);
+
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['kingdom-transactions'] });
+      queryClient.invalidateQueries({ queryKey: ['kingdom-transaction-counts'] });
+      alert('✅ Transaction deleted successfully!');
+    },
+    onError: (error) => {
+      alert(`❌ Failed to delete transaction\n\n${error.message}`);
+      console.error('Delete transaction error:', error);
+    },
+  });
+
+  const restoreTransactionMutation = useMutation({
+    mutationFn: async (transactionId: string) => {
+      // Get the previous status
+      const { data: transaction, error: fetchError } = await supabase
+        .from('transactions')
+        .select('previous_status')
+        .eq('id', transactionId)
+        .single();
+
+      if (fetchError) throw fetchError;
+
+      const { error } = await supabase
+        .from('transactions')
+        .update({
+          is_deleted: false,
+          deleted_reason: null,
+          status: transaction.previous_status || 'pending-ledger',
+          previous_status: null,
+        })
+        .eq('id', transactionId);
+
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['kingdom-transactions'] });
+      queryClient.invalidateQueries({ queryKey: ['kingdom-transaction-counts'] });
+      alert('✅ Transaction restored successfully!');
+    },
+    onError: (error) => {
+      alert(`❌ Failed to restore transaction\n\n${error.message}`);
+      console.error('Restore transaction error:', error);
     },
   });
 
@@ -513,6 +610,13 @@ export default function KingdomTransactions() {
         >
           Pending Statement {counts && <span className="ml-1.5 text-xs opacity-70">({counts['pending-statement']})</span>}
         </Button>
+        <Button
+          variant={statusFilter === 'deleted' ? 'default' : 'outline'}
+          onClick={() => handleStatusFilterChange('deleted')}
+          size="sm"
+        >
+          Deleted {counts && <span className="ml-1.5 text-xs opacity-70">({counts.deleted})</span>}
+        </Button>
       </div>
 
       {selectedForMatch && (
@@ -565,6 +669,26 @@ export default function KingdomTransactions() {
         </Card>
       )}
 
+      <DeleteTransactionModal
+        isOpen={deleteModalOpen}
+        onClose={() => {
+          setDeleteModalOpen(false);
+          setSelectedTransaction(null);
+        }}
+        onConfirm={(reason) => {
+          if (selectedTransaction) {
+            deleteTransactionMutation.mutate({ transactionId: selectedTransaction.id, reason });
+          }
+        }}
+        mode={deleteModalMode}
+        existingReason={selectedTransaction?.deleted_reason || undefined}
+        onRestore={
+          deleteModalMode === 'view' && selectedTransaction
+            ? () => restoreTransactionMutation.mutate(selectedTransaction.id)
+            : undefined
+        }
+      />
+
       <div className="space-y-2">
         {filteredTransactions.map((transaction) => (
           <TransactionCard
@@ -575,6 +699,17 @@ export default function KingdomTransactions() {
             onManualMatch={(t2) => manualReconcileMutation.mutate({ transaction1: selectedForMatch!, transaction2: t2 })}
             isMatchInProgress={manualReconcileMutation.isPending}
             allTransactions={filteredTransactions}
+            onDelete={(t) => {
+              setSelectedTransaction(t);
+              setDeleteModalMode('delete');
+              setDeleteModalOpen(true);
+            }}
+            onViewDeleteReason={(t) => {
+              setSelectedTransaction(t);
+              setDeleteModalMode('view');
+              setDeleteModalOpen(true);
+            }}
+            statusFilter={statusFilter}
           />
         ))}
       </div>
@@ -601,6 +736,9 @@ function TransactionCard({
   onManualMatch,
   isMatchInProgress,
   allTransactions,
+  onDelete,
+  onViewDeleteReason,
+  statusFilter,
 }: {
   transaction: Transaction;
   selectedForMatch: Transaction | null;
@@ -608,6 +746,9 @@ function TransactionCard({
   onManualMatch: (transaction: Transaction) => void;
   isMatchInProgress: boolean;
   allTransactions: Transaction[];
+  onDelete: (transaction: Transaction) => void;
+  onViewDeleteReason: (transaction: Transaction) => void;
+  statusFilter: ReconciliationStatus | 'all' | 'kingdom' | 'deleted';
 }) {
   const [showMatch, setShowMatch] = useState(false);
 
@@ -641,8 +782,11 @@ function TransactionCard({
     return 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200';
   };
 
+  // Apply 50% opacity to deleted transactions when viewing "All"
+  const cardOpacity = transaction.is_deleted && statusFilter === 'all' ? 'opacity-50' : '';
+
   return (
-    <Card className="p-4">
+    <Card className={`p-4 ${cardOpacity}`}>
       <div className="space-y-3">
         <div className="flex items-center justify-between gap-4">
           <div className="flex-1 grid grid-cols-7 gap-4">
@@ -706,7 +850,7 @@ function TransactionCard({
           </div>
 
           <div className="flex gap-2">
-            {transaction.status !== 'reconciled' && (
+            {!transaction.is_deleted && transaction.status !== 'reconciled' && (
               <Button
                 size="icon"
                 variant={selectedForMatch?.id === transaction.id ? 'default' : 'outline'}
@@ -729,13 +873,34 @@ function TransactionCard({
                 )}
               </Button>
             )}
-            {transaction.status === 'reconciled' && (
+            {!transaction.is_deleted && transaction.status === 'reconciled' && (
               <Button
                 size="icon"
                 variant="ghost"
                 onClick={() => setShowMatch(!showMatch)}
+                title="View matched transaction"
               >
                 <Eye className="h-4 w-4" />
+              </Button>
+            )}
+            {transaction.is_deleted && (
+              <Button
+                size="icon"
+                variant="ghost"
+                onClick={() => onViewDeleteReason(transaction)}
+                title="View deletion reason and restore"
+              >
+                <Eye className="h-4 w-4" />
+              </Button>
+            )}
+            {!transaction.is_deleted && transaction.status !== 'reconciled' && (
+              <Button
+                size="icon"
+                variant="ghost"
+                onClick={() => onDelete(transaction)}
+                title="Delete transaction"
+              >
+                <Trash2 className="h-4 w-4" />
               </Button>
             )}
           </div>
