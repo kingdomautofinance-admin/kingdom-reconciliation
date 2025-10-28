@@ -1,5 +1,6 @@
-import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+// Updated: October 28, 2025
 import path from 'path';
 
 // https://vitejs.dev/config/
