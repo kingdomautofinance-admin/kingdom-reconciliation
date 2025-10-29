@@ -7,6 +7,8 @@ import Papa from 'papaparse';
 import { supabase } from '@/lib/supabase';
 import { queryClient } from '@/lib/queryClient';
 import { autoReconcileAll } from '@/lib/reconciliation';
+import { ImportHistorySection } from '@/components/ImportHistorySection';
+import { IMPORT_SOURCE_IDS, startImportHistory, updateImportHistory } from '@/lib/importHistory';
 
 interface KingdomCSVRow {
   _id: string;
@@ -46,63 +48,109 @@ export function KingdomUpload() {
 
   const uploadMutation = useMutation({
     mutationFn: async (file: File) => {
-      return new Promise<{ imported: number; duplicates: number }>((resolve, reject) => {
-        Papa.parse(file, {
-          header: true,
-          skipEmptyLines: true,
-          complete: async (results) => {
-            try {
-              const rows = results.data as KingdomCSVRow[];
-              let imported = 0;
-              let duplicates = 0;
-
-              for (const row of rows) {
-                // Only process cleared payments (status = 2)
-                if (row.status !== '2') continue;
-
-                if (!row.clearedDate || !row.paymentAmount) continue;
-
-                try {
-                  // Parse ISO 8601 date format from clearedDate
-                  const transactionDate = new Date(row.clearedDate).toISOString().split('T')[0];
-                  const paymentMethodText = mapPaymentMethod(row.paymentMethod);
-
-                  const { error } = await supabase
-                    .from('kingdom_transactions')
-                    .insert({
-                      date: transactionDate,
-                      value: row.paymentAmount,
-                      name: null,
-                      car: null,
-                      payment_method: paymentMethodText,
-                      source: `Kingdom Payment - ${row._id} - ${file.name}`,
-                      status: 'pending-statement',
-                    });
-
-                  if (error) {
-                    if (error.code === '23505') {
-                      duplicates++;
-                    } else {
-                      throw error;
-                    }
-                  } else {
-                    imported++;
-                  }
-                } catch (err) {
-                  console.error('Error inserting row:', err);
-                }
-              }
-
-              resolve({ imported, duplicates });
-            } catch (error) {
-              reject(error);
-            }
-          },
-          error: (error) => {
-            reject(error);
-          },
-        });
+      const historyRecord = await startImportHistory(IMPORT_SOURCE_IDS.kingdom, {
+        spreadsheetName: 'Sistema Kingdom',
       });
+      const historyRecordId = historyRecord?.id ?? null;
+
+      let totalProcessed = 0;
+      let importedCount = 0;
+      let duplicateCount = 0;
+      let historyFinalized = false;
+
+      try {
+        await new Promise<void>((resolve, reject) => {
+          Papa.parse(file, {
+            header: true,
+            skipEmptyLines: true,
+            complete: async (results) => {
+              try {
+                const rows = results.data as KingdomCSVRow[];
+
+                for (const row of rows) {
+                  // Only process cleared payments (status = 2)
+                  if (row.status !== '2') continue;
+                  if (!row.clearedDate || !row.paymentAmount) continue;
+
+                  totalProcessed++;
+
+                  try {
+                    const transactionDate = new Date(row.clearedDate).toISOString().split('T')[0];
+                    const paymentMethodText = mapPaymentMethod(row.paymentMethod);
+
+                    const { error } = await supabase
+                      .from('kingdom_transactions')
+                      .insert({
+                        date: transactionDate,
+                        value: row.paymentAmount,
+                        name: null,
+                        car: null,
+                        payment_method: paymentMethodText,
+                        source: `Kingdom Payment - ${row._id} - ${file.name}`,
+                        status: 'pending-statement',
+                      });
+
+                    if (error) {
+                      if (error.code === '23505') {
+                        duplicateCount++;
+                      } else {
+                        throw error;
+                      }
+                    } else {
+                      importedCount++;
+                    }
+                  } catch (err) {
+                    console.error('Error inserting row:', err);
+                  }
+                }
+
+                if (historyRecordId) {
+                  await updateImportHistory(historyRecordId, {
+                    status: 'success',
+                    total_records_processed: totalProcessed,
+                    records_imported: importedCount,
+                    duplicates_skipped: duplicateCount,
+                    error_message: null,
+                  });
+                  historyFinalized = true;
+                }
+
+                resolve();
+              } catch (error) {
+                reject(error);
+              }
+            },
+            error: async (error) => {
+              if (historyRecordId && !historyFinalized) {
+                await updateImportHistory(historyRecordId, {
+                  status: 'failed',
+                  total_records_processed: totalProcessed,
+                  records_imported: importedCount,
+                  duplicates_skipped: duplicateCount,
+                  error_message: error.message,
+                });
+                historyFinalized = true;
+              }
+              reject(error);
+            },
+          });
+        });
+
+        return { imported: importedCount, duplicates: duplicateCount };
+      } catch (error: any) {
+        if (historyRecordId && !historyFinalized) {
+          const message = typeof error?.message === 'string' ? error.message : 'Unknown error';
+          await updateImportHistory(historyRecordId, {
+            status: 'failed',
+            total_records_processed: totalProcessed,
+            records_imported: importedCount,
+            duplicates_skipped: duplicateCount,
+            error_message: message,
+          });
+        }
+
+        throw error;
+      }
     },
     onSuccess: async (result) => {
       queryClient.invalidateQueries({ queryKey: ['kingdom-transactions'] });
@@ -134,6 +182,9 @@ export function KingdomUpload() {
     onError: (error) => {
       alert(`❌ Upload failed\n\n${error.message}`);
       console.error('Upload error:', error);
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['import-history', IMPORT_SOURCE_IDS.kingdom] });
     },
   });
 
@@ -253,6 +304,11 @@ export function KingdomUpload() {
             )}
           </Button>
         </div>
+
+        <ImportHistorySection
+          sourceId={IMPORT_SOURCE_IDS.kingdom}
+          title="Import History"
+        />
 
         <div className="text-xs text-muted-foreground space-y-1 border-t pt-4">
           <p className="font-semibold">Expected CSV format (Kingdom Payments):</p>

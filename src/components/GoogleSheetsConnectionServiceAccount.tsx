@@ -16,6 +16,34 @@ import {
 } from '@/lib/googleSheetsService';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { CheckCircle2 } from 'lucide-react';
+import { ImportHistorySection } from '@/components/ImportHistorySection';
+
+function resolveSpreadsheetId(value?: string | null) {
+  if (!value) return null;
+  const match = value.match(/\/d\/([a-zA-Z0-9-_]+)/);
+  return match ? match[1] : value;
+}
+
+function formatDateTime(value: string | null) {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString('en-US', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function prettyStatus(status: string) {
+  return status
+    .split(/[\s_-]+/)
+    .filter(Boolean)
+    .map((part) => part[0]?.toUpperCase() + part.slice(1))
+    .join(' ');
+}
 
 export function GoogleSheetsConnectionServiceAccount() {
   const [spreadsheetUrl, setSpreadsheetUrl] = useState('');
@@ -54,19 +82,25 @@ export function GoogleSheetsConnectionServiceAccount() {
     refetchOnWindowFocus: false,
   });
 
-  const { data: importHistory } = useQuery<ImportHistory[]>({
-    queryKey: ['import-history'],
+  const resolvedSpreadsheetId = resolveSpreadsheetId(connection?.spreadsheet_id);
+
+  const { data: importHistory = [] } = useQuery<ImportHistory[]>({
+    queryKey: ['import-history', resolvedSpreadsheetId],
     queryFn: async () => {
+      if (!resolvedSpreadsheetId) return [];
+
       const { data, error } = await supabase
         .from('import_history')
         .select('*')
-        .order('created_at', { ascending: false })
+        .eq('spreadsheet_id', resolvedSpreadsheetId)
+        .order('import_started_at', { ascending: false })
         .limit(5);
 
       if (error) throw error;
-      return data || [];
+      return data ?? [];
     },
-    enabled: !!connection,
+    enabled: Boolean(resolvedSpreadsheetId),
+    staleTime: 30_000,
   });
 
   const importOptionsSection = (
@@ -350,7 +384,10 @@ export function GoogleSheetsConnectionServiceAccount() {
       setSyncStatus('Sync completed successfully!');
       setSyncProgress(100);
       queryClient.invalidateQueries({ queryKey: ['transactions'] });
-      queryClient.invalidateQueries({ queryKey: ['import-history'] });
+      const historyKeyId = resolveSpreadsheetId(connection?.spreadsheet_id);
+      if (historyKeyId) {
+        queryClient.invalidateQueries({ queryKey: ['import-history', historyKeyId] });
+      }
     },
     onError: (error) => {
       console.error('Mutation error:', error);
@@ -633,7 +670,7 @@ export function GoogleSheetsConnectionServiceAccount() {
 
       setSyncStatus(`Importado: 0 | Duplicados desconsiderados: ${duplicatesSkipped}${dateRangeLabel}`);
       setSyncProgress(100);
-      queryClient.invalidateQueries({ queryKey: ['import-history'] });
+      queryClient.invalidateQueries({ queryKey: ['import-history', spreadsheetId] });
       setTimeout(() => {
         setSyncProgress(0);
         setSyncStatus('');
@@ -731,7 +768,7 @@ export function GoogleSheetsConnectionServiceAccount() {
     setSyncProgress(100);
     setEstimatedTime(null);
     setStartTime(null);
-    queryClient.invalidateQueries({ queryKey: ['import-history'] });
+    queryClient.invalidateQueries({ queryKey: ['import-history', spreadsheetId] });
     setTimeout(() => {
       setSyncProgress(0);
       setSyncStatus('');
@@ -783,24 +820,33 @@ export function GoogleSheetsConnectionServiceAccount() {
               {importOptionsSection}
 
               {/* Last Import Info */}
-              {importHistory && importHistory.length > 0 && (
+              {importHistory.length > 0 && (
                 <div className="text-sm space-y-1 p-3 bg-muted/30 rounded-md">
                   <div className="font-medium">Last Import:</div>
                   <div className="text-muted-foreground space-y-0.5">
                     <div>
-                      Date: {new Date(importHistory[0].started_at).toLocaleString()}
+                      Date: {formatDateTime(importHistory[0].import_started_at)}
                     </div>
                     <div>
-                      Status: <span className={importHistory[0].status === 'completed' ? 'text-green-600' : 'text-red-600'}>
-                        {importHistory[0].status}
+                      Status:{' '}
+                      <span
+                        className={
+                          importHistory[0].status === 'success'
+                            ? 'text-green-600 dark:text-green-400'
+                            : importHistory[0].status === 'failed' || importHistory[0].status === 'error'
+                            ? 'text-red-600 dark:text-red-400'
+                            : 'text-blue-600 dark:text-blue-400'
+                        }
+                      >
+                        {prettyStatus(importHistory[0].status)}
                       </span>
                     </div>
                     <div>
-                      Rows: {importHistory[0].successful_rows} successful, {importHistory[0].failed_rows} failed
+                      Records: {importHistory[0].records_imported} imported • {importHistory[0].duplicates_skipped} duplicates • {importHistory[0].total_records_processed} total
                     </div>
-                    {(importHistory[0].filter_start_date || importHistory[0].filter_end_date) && (
-                      <div>
-                        Date Range: {importHistory[0].filter_start_date || 'earliest'} to {importHistory[0].filter_end_date || 'latest'}
+                    {importHistory[0].error_message && (
+                      <div className="text-destructive">
+                        Error: {importHistory[0].error_message}
                       </div>
                     )}
                   </div>
@@ -1226,75 +1272,11 @@ export function GoogleSheetsConnectionServiceAccount() {
           </div>
         )}
 
-        {importHistory && importHistory.length > 0 && (
-          <div className="space-y-2 pt-2 border-t">
-            <label className="text-xs font-semibold text-muted-foreground">
-              Import History
-            </label>
-            <div className="space-y-2">
-              {importHistory.map((record) => (
-                <div
-                  key={record.id}
-                  className="bg-muted/30 rounded-md p-2 text-xs space-y-1"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="font-medium">
-                      {formatDate(record.import_started_at)}
-                    </span>
-                    <div className="flex items-center gap-2">
-                      <Badge
-                        variant={record.status === 'success' ? 'default' : 'destructive'}
-                        className="text-xs h-5"
-                      >
-                        {record.status}
-                      </Badge>
-                      {record.status === 'in_progress' && (
-                        <Button
-                          variant="destructive"
-                          size="sm"
-                          className="h-5 px-2"
-                          onClick={async () => {
-                            await supabase
-                              .from('import_history')
-                              .update({
-                                status: 'cancelled',
-                                import_completed_at: new Date().toISOString(),
-                              })
-                              .eq('id', record.id);
-                            queryClient.invalidateQueries({ queryKey: ['import-history'] });
-                          }}
-                        >
-                          <XCircle className="h-3 w-3 mr-1" />
-                          Cancel
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-3 gap-2 text-muted-foreground">
-                    <div>
-                      <span className="font-medium text-foreground">
-                        {record.records_imported}
-                      </span>{' '}
-                      imported
-                    </div>
-                    <div>
-                      <span className="font-medium text-foreground">
-                        {record.duplicates_skipped}
-                      </span>{' '}
-                      skipped
-                    </div>
-                    <div>
-                      <span className="font-medium text-foreground">
-                        {record.total_records_processed}
-                      </span>{' '}
-                      total
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+        <ImportHistorySection
+          sourceId={resolvedSpreadsheetId}
+          title="Import History"
+          awaitingSourceMessage="Connect Google Sheets to view import history."
+        />
       </div>
     );
   }

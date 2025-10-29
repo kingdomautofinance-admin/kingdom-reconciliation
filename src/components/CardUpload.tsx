@@ -26,6 +26,8 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Upload as UploadIcon, XCircle, AlertCircle, CheckCircle } from 'lucide-react';
+import { ImportHistorySection } from '@/components/ImportHistorySection';
+import { IMPORT_SOURCE_IDS, startImportHistory, updateImportHistory } from '@/lib/importHistory';
 
 export function CardUpload() {
   const [file, setFile] = useState<File | null>(null);
@@ -39,126 +41,176 @@ export function CardUpload() {
     mutationFn: async ({ file, runAutoReconcile }: { file: File; runAutoReconcile: boolean }) => {
       cancelRef.current = false;
 
-      console.log('[CARD UPLOAD] Starting card import process');
-      setUploadStatus('Validating file...');
+      const historyRecord = await startImportHistory(IMPORT_SOURCE_IDS.card, {
+        spreadsheetName: 'Upload Card Transactions (Stripe)',
+      });
+      const historyRecordId = historyRecord?.id ?? null;
 
-      const validation = await validateStripeCSV(file);
-      if (!validation.valid) {
-        throw new Error(`Validation failed: ${validation.errors.join(', ')}`);
-      }
+      let totalRecordsProcessed = 0;
+      let recordsImported = 0;
+      let duplicatesSkipped = 0;
 
-      if (validation.warnings.length > 0) {
-        console.warn('[CARD UPLOAD] Validation warnings:', validation.warnings);
-      }
+      try {
+        console.log('[CARD UPLOAD] Starting card import process');
+        setUploadStatus('Validating file...');
 
-      setUploadStatus('Parsing Stripe CSV...');
-      console.log('[CARD UPLOAD] Starting parse');
-      const newTransactions = await parseStripeCSV(file);
-      console.log('[CARD UPLOAD] Parse complete. Transactions found:', newTransactions.length);
+        const validation = await validateStripeCSV(file);
+        if (!validation.valid) {
+          throw new Error(`Validation failed: ${validation.errors.join(', ')}`);
+        }
 
-      if (newTransactions.length === 0) {
-        throw new Error('No valid transactions found in CSV file. Please verify the file format.');
-      }
+        if (validation.warnings.length > 0) {
+          console.warn('[CARD UPLOAD] Validation warnings:', validation.warnings);
+        }
 
-      if (cancelRef.current) {
-        throw new Error('Upload cancelled by user');
-      }
+        setUploadStatus('Parsing Stripe CSV...');
+        console.log('[CARD UPLOAD] Starting parse');
+        const newTransactions = await parseStripeCSV(file);
+        console.log('[CARD UPLOAD] Parse complete. Transactions found:', newTransactions.length);
 
-      setUploadStatus('Checking for duplicates...');
-      console.log('[CARD UPLOAD] Fetching existing transactions');
-      const { data: existingTransactions } = await supabase
-        .from('transactions')
-        .select('date, value, depositor, payment_method, source, name, car');
+        totalRecordsProcessed = newTransactions.length;
 
-      console.log('[CARD UPLOAD] Running duplicate detection');
-      const uniqueTransactions = detectDuplicates(
-        newTransactions,
-        existingTransactions || []
-      );
+        if (newTransactions.length === 0) {
+          throw new Error('No valid transactions found in CSV file. Please verify the file format.');
+        }
 
-      console.log('[CARD UPLOAD] Unique transactions to import:', uniqueTransactions.length);
-
-      if (uniqueTransactions.length === 0) {
-        return {
-          imported: 0,
-          duplicates: newTransactions.length,
-          reconciled: 0,
-        };
-      }
-
-      setUploadStatus(`Importing ${uniqueTransactions.length} card transactions...`);
-
-      const batchSize = 100;
-      let successfullyImported = 0;
-      let dbDuplicatesSkipped = 0;
-
-      for (let i = 0; i < uniqueTransactions.length; i += batchSize) {
         if (cancelRef.current) {
           throw new Error('Upload cancelled by user');
         }
 
-        const batch = uniqueTransactions.slice(i, i + batchSize);
-        const { data, error } = await supabase.from('transactions').insert(batch as any).select();
+        setUploadStatus('Checking for duplicates...');
+        console.log('[CARD UPLOAD] Fetching existing transactions');
+        const { data: existingTransactions } = await supabase
+          .from('transactions')
+          .select('date, value, depositor, payment_method, source, name, car');
 
-        if (error) {
-          if (error.code === '23505' && error.message.includes('transactions_unique_hash')) {
-            console.warn('[CARD UPLOAD] Database detected duplicates. Attempting individual inserts...');
+        console.log('[CARD UPLOAD] Running duplicate detection');
+        const uniqueTransactions = detectDuplicates(
+          newTransactions,
+          existingTransactions || []
+        );
 
-            for (const transaction of batch) {
-              const { data: singleData, error: singleError } = await supabase
-                .from('transactions')
-                .insert(transaction as any)
-                .select();
+        console.log('[CARD UPLOAD] Unique transactions to import:', uniqueTransactions.length);
 
-              if (singleError) {
-                if (singleError.code === '23505') {
-                  dbDuplicatesSkipped++;
-                  console.log('[CARD UPLOAD] DB duplicate skipped:', transaction);
-                } else {
-                  console.error('[CARD UPLOAD] Insert error:', singleError);
-                  throw singleError;
-                }
-              } else if (singleData) {
-                successfullyImported++;
-              }
-            }
-          } else {
-            console.error('[CARD UPLOAD] Unexpected error:', error);
-            throw error;
+        const baseDuplicates = newTransactions.length - uniqueTransactions.length;
+        duplicatesSkipped = baseDuplicates;
+
+        if (uniqueTransactions.length === 0) {
+          if (historyRecordId) {
+            await updateImportHistory(historyRecordId, {
+              status: 'success',
+              total_records_processed: totalRecordsProcessed,
+              records_imported: 0,
+              duplicates_skipped: baseDuplicates,
+              error_message: null,
+            });
           }
-        } else {
-          successfullyImported += data?.length || batch.length;
+
+          return {
+            imported: 0,
+            duplicates: newTransactions.length,
+            reconciled: 0,
+          };
         }
 
-        const progress = Math.round((i / uniqueTransactions.length) * 100);
-        setUploadStatus(`Importing... ${progress}% (${successfullyImported} of ${uniqueTransactions.length})`);
+        setUploadStatus(`Importing ${uniqueTransactions.length} card transactions...`);
+
+        const batchSize = 100;
+        let dbDuplicatesSkipped = 0;
+
+        for (let i = 0; i < uniqueTransactions.length; i += batchSize) {
+          if (cancelRef.current) {
+            throw new Error('Upload cancelled by user');
+          }
+
+          const batch = uniqueTransactions.slice(i, i + batchSize);
+          const { data, error } = await supabase.from('transactions').insert(batch as any).select();
+
+          if (error) {
+            if (error.code === '23505' && error.message.includes('transactions_unique_hash')) {
+              console.warn('[CARD UPLOAD] Database detected duplicates. Attempting individual inserts...');
+
+              for (const transaction of batch) {
+                const { data: singleData, error: singleError } = await supabase
+                  .from('transactions')
+                  .insert(transaction as any)
+                  .select();
+
+                if (singleError) {
+                  if (singleError.code === '23505') {
+                    dbDuplicatesSkipped++;
+                    console.log('[CARD UPLOAD] DB duplicate skipped:', transaction);
+                  } else {
+                    console.error('[CARD UPLOAD] Insert error:', singleError);
+                    throw singleError;
+                  }
+                } else if (singleData) {
+                  recordsImported++;
+                }
+              }
+            } else {
+              console.error('[CARD UPLOAD] Unexpected error:', error);
+              throw error;
+            }
+          } else {
+            recordsImported += data?.length || batch.length;
+          }
+
+          const progress = Math.round((i / uniqueTransactions.length) * 100);
+          setUploadStatus(`Importing... ${progress}% (${recordsImported} of ${uniqueTransactions.length})`);
+        }
+
+        console.log('[CARD UPLOAD] Import complete');
+        console.log('[CARD UPLOAD] Successfully imported:', recordsImported);
+        console.log('[CARD UPLOAD] DB duplicates skipped:', dbDuplicatesSkipped);
+
+        if (cancelRef.current) {
+          throw new Error('Upload cancelled by user');
+        }
+
+        duplicatesSkipped = baseDuplicates + dbDuplicatesSkipped;
+        let reconciled = 0;
+
+        if (runAutoReconcile) {
+          setUploadStatus('Running auto-reconciliation...');
+          console.log('[CARD UPLOAD] Starting auto-reconciliation');
+          const reconcileResult = await autoReconcileAll();
+          reconciled = reconcileResult.matched;
+          console.log('[CARD UPLOAD] Reconciled:', reconciled);
+        }
+
+        if (historyRecordId) {
+          await updateImportHistory(historyRecordId, {
+            status: 'success',
+            total_records_processed: totalRecordsProcessed,
+            records_imported: recordsImported,
+            duplicates_skipped: duplicatesSkipped,
+            error_message: null,
+          });
+        }
+
+        console.log('[CARD UPLOAD] Process complete');
+        return {
+          imported: recordsImported,
+          duplicates: duplicatesSkipped,
+          reconciled,
+        };
+      } catch (error: any) {
+        const message = typeof error?.message === 'string' ? error.message : 'Unknown error';
+        const isCancelled = message.toLowerCase().includes('cancelled');
+
+        if (historyRecordId) {
+          await updateImportHistory(historyRecordId, {
+            status: isCancelled ? 'cancelled' : 'failed',
+            total_records_processed: totalRecordsProcessed,
+            records_imported: recordsImported,
+            duplicates_skipped: duplicatesSkipped,
+            error_message: isCancelled ? 'Import cancelled by user' : message,
+          });
+        }
+
+        throw error;
       }
-
-      console.log('[CARD UPLOAD] Import complete');
-      console.log('[CARD UPLOAD] Successfully imported:', successfullyImported);
-      console.log('[CARD UPLOAD] DB duplicates skipped:', dbDuplicatesSkipped);
-
-      if (cancelRef.current) {
-        throw new Error('Upload cancelled by user');
-      }
-
-      const totalDuplicates = newTransactions.length - uniqueTransactions.length + dbDuplicatesSkipped;
-      let reconciled = 0;
-
-      if (runAutoReconcile) {
-        setUploadStatus('Running auto-reconciliation...');
-        console.log('[CARD UPLOAD] Starting auto-reconciliation');
-        const reconcileResult = await autoReconcileAll();
-        reconciled = reconcileResult.matched;
-        console.log('[CARD UPLOAD] Reconciled:', reconciled);
-      }
-
-      console.log('[CARD UPLOAD] Process complete');
-      return {
-        imported: successfullyImported,
-        duplicates: totalDuplicates,
-        reconciled,
-      };
     },
     onSuccess: (data) => {
       const message = data.reconciled > 0
@@ -176,12 +228,16 @@ export function CardUpload() {
       }, 10000);
     },
     onError: (error: any) => {
-      const isCancelled = error.message.includes('cancelled');
+      const message = typeof error?.message === 'string' ? error.message : '';
+      const isCancelled = message.includes('cancelled');
       console.error('[CARD UPLOAD] Error:', error);
-      setUploadStatus(isCancelled ? 'Upload cancelled' : `Error: ${error.message}`);
+      setUploadStatus(isCancelled ? 'Upload cancelled' : `Error: ${message || 'Unexpected error'}`);
       if (isCancelled) {
         setTimeout(() => setUploadStatus(''), 3000);
       }
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['import-history', IMPORT_SOURCE_IDS.card] });
     },
   });
 
@@ -309,6 +365,11 @@ export function CardUpload() {
             <span>{uploadStatus}</span>
           </div>
         )}
+
+        <ImportHistorySection
+          sourceId={IMPORT_SOURCE_IDS.card}
+          title="Import History"
+        />
 
         <div className="text-xs text-muted-foreground border-t pt-3 mt-3">
           <p className="font-semibold mb-1">Supported Stripe CSV formats:</p>
