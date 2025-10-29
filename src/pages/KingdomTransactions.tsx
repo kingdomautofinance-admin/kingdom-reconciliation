@@ -149,26 +149,7 @@ export default function KingdomTransactions() {
       }
 
       if (appliedSearchTerm) {
-        const escapeForILike = (value: string) =>
-          value.replace(/([%_\\])/g, '\\$1');
-        const wildcard = `%${escapeForILike(appliedSearchTerm)}%`;
-        const orFilters = [
-          `name.ilike.${wildcard}`,
-          `depositor.ilike.${wildcard}`,
-          `car.ilike.${wildcard}`,
-          `historical_text.ilike.${wildcard}`,
-          `source.ilike.${wildcard}`,
-        ];
-
-        const numericSearch = appliedSearchTerm.replace(/[^\d.-]/g, '');
-        if (numericSearch) {
-          const numericWildcard = `%${escapeForILike(numericSearch)}%`;
-          orFilters.push(`value::TEXT.ilike.${numericWildcard}`);
-        } else {
-          orFilters.push(`value::TEXT.ilike.${wildcard}`);
-        }
-
-        query = query.or(orFilters.join(','));
+        query = query.or(`name.ilike.%${appliedSearchTerm}%,depositor.ilike.%${appliedSearchTerm}%,car.ilike.%${appliedSearchTerm}%,historical_text.ilike.%${appliedSearchTerm}%,source.ilike.%${appliedSearchTerm}%,value.ilike.%${appliedSearchTerm}%`);
       }
 
       const { data, error } = await query.range(start, end);
