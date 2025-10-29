@@ -168,9 +168,9 @@ export default function Transactions() {
       }
 
       if (appliedSearchTerm) {
-        // Use filter() method with proper PostgREST or syntax
-        // According to PostgREST docs, or() needs proper pattern format
-        const orFilter = [
+        // Build OR conditions for searching across multiple columns
+        // The .or() method automatically wraps conditions in parentheses
+        const orConditions = [
           `name.ilike.*${appliedSearchTerm}*`,
           `depositor.ilike.*${appliedSearchTerm}*`,
           `car.ilike.*${appliedSearchTerm}*`,
@@ -179,8 +179,7 @@ export default function Transactions() {
           `value::text.ilike.*${appliedSearchTerm}*`
         ].join(',');
         
-        // Use .filter() instead of .or() to pass raw filter string
-        query = query.filter('or', `(${orFilter})`);
+        query = query.or(orConditions);
       }
 
       const { data, error } = await query.range(start, end);
