@@ -8,7 +8,7 @@ import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Eye, Search, CheckCircle2, Loader2, Link2, Calendar, Trash2 } from 'lucide-react';
+import { Eye, Search, CheckCircle2, Loader2, Link2, Calendar, Trash2, Pencil } from 'lucide-react';
 import {
   formatDate,
   formatCurrency,
@@ -19,6 +19,8 @@ import {
 import { autoReconcileAll } from '@/lib/reconciliation';
 import { fetchPreferredMinTransactionDate } from '@/lib/transactionFilters';
 import { DeleteTransactionModal } from '@/components/DeleteTransactionModal';
+import { EditTransactionModal } from '@/components/EditTransactionModal';
+import { useToast } from '@/components/ui/toast';
 
 const TRANSACTIONS_PER_PAGE = 50;
 
@@ -34,6 +36,7 @@ const buildAmountCondition = (rawTerm: string) => {
 };
 
 export default function Transactions() {
+  const { showToast } = useToast();
   const [location] = useLocation();
   
   // Parse URL query parameters for date filtering
@@ -53,6 +56,8 @@ export default function Transactions() {
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [deleteModalMode, setDeleteModalMode] = useState<'delete' | 'view'>('delete');
   const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [transactionToEdit, setTransactionToEdit] = useState<Transaction | null>(null);
   const observerTarget = useRef<HTMLDivElement>(null);
   const dateFromPickerRef = useRef<HTMLInputElement>(null);
   const dateToPickerRef = useRef<HTMLInputElement>(null);
@@ -327,10 +332,10 @@ export default function Transactions() {
       queryClient.invalidateQueries({ queryKey: ['transactions'] });
       queryClient.invalidateQueries({ queryKey: ['transaction-counts'] });
       setSelectedForMatch(null);
-      alert('✅ Manual reconciliation successful!');
+      showToast('Manual reconciliation successful!', 'success');
     },
     onError: (error) => {
-      alert(`❌ Manual reconciliation failed\n\n${error.message}`);
+      showToast(`Manual reconciliation failed\n\n${error.message}`, 'error');
       console.error('Manual reconcile error:', error);
     },
   });
@@ -360,10 +365,10 @@ export default function Transactions() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['transactions'] });
       queryClient.invalidateQueries({ queryKey: ['transaction-counts'] });
-      alert('✅ Transaction deleted successfully!');
+      showToast('Transaction deleted successfully!', 'success');
     },
     onError: (error) => {
-      alert(`❌ Failed to delete transaction\n\n${error.message}`);
+      showToast(`Failed to delete transaction\n\n${error.message}`, 'error');
       console.error('Delete transaction error:', error);
     },
   });
@@ -394,11 +399,31 @@ export default function Transactions() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['transactions'] });
       queryClient.invalidateQueries({ queryKey: ['transaction-counts'] });
-      alert('✅ Transaction restored successfully!');
+      showToast('Transaction restored successfully!', 'success');
     },
     onError: (error) => {
-      alert(`❌ Failed to restore transaction\n\n${error.message}`);
+      showToast(`Failed to restore transaction\n\n${error.message}`, 'error');
       console.error('Restore transaction error:', error);
+    },
+  });
+
+  const editTransactionMutation = useMutation({
+    mutationFn: async ({ transactionId, updates }: { transactionId: string; updates: Partial<Transaction> }) => {
+      const { error } = await supabase
+        .from('transactions')
+        .update(updates)
+        .eq('id', transactionId);
+
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['transactions'] });
+      queryClient.invalidateQueries({ queryKey: ['transaction-counts'] });
+      showToast('Transaction updated successfully!', 'success');
+    },
+    onError: (error) => {
+      showToast(`Failed to update transaction\n\n${error.message}`, 'error');
+      console.error('Edit transaction error:', error);
     },
   });
 
@@ -409,27 +434,23 @@ export default function Transactions() {
       queryClient.invalidateQueries({ queryKey: ['transaction-counts'] });
 
       const summary = [
-        '============================================================',
         'RECONCILIATION COMPLETE',
-        '============================================================',
         '',
         `Total Processed: ${result.totalProcessed}`,
         `Reconciliation CORRECT: ${result.matched}`,
         `Reconciliation INCORRECT: ${result.totalProcessed - result.matched}`,
         '',
         'Criteria:',
-        '  \u2022 Date: \u00b12 days tolerance',
-        '  \u2022 Value: 100% exact match',
-        '  \u2022 Payment Method: 100% exact match',
-        '  \u2022 Name: \u226550% similarity (skipped for Credit Card)',
-        '',
-        '============================================================'
+        '  • Date: ±2 days tolerance',
+        '  • Value: 100% exact match',
+        '  • Payment Method: 100% exact match',
+        '  • Name: ≥50% similarity (skipped for Credit Card)'
       ].join('\n');
 
-      alert(summary);
+      showToast(summary, 'success');
     },
     onError: (error) => {
-      alert(`❌ Auto Reconcile Failed\n\n${error.message}`);
+      showToast(`Auto Reconcile Failed\n\n${error.message}`, 'error');
       console.error('Auto reconcile error:', error);
     },
   });
@@ -638,54 +659,74 @@ export default function Transactions() {
       </div>
 
       {selectedForMatch && (
-        <Card className="p-4 bg-blue-50 dark:bg-blue-950 border-blue-200 dark:border-blue-800 sticky top-0 z-10">
-          <div className="flex items-center gap-6">
-            <div className="font-semibold text-blue-900 dark:text-blue-100 whitespace-nowrap">
-              Selected for Match:
+        <Card className="p-3 bg-blue-50 dark:bg-blue-950 border-blue-200 dark:border-blue-800 sticky top-0 z-10">
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="text-xs font-semibold text-blue-900 dark:text-blue-100">
+                Selected for Match:
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setSelectedForMatch(null)}
+                className="h-7 px-2 text-xs"
+              >
+                Cancel
+              </Button>
             </div>
-            <div className="flex-1 grid grid-cols-6 gap-4 text-sm text-blue-800 dark:text-blue-200">
+            <div className="grid grid-cols-7 gap-3 text-sm text-blue-800 dark:text-blue-200">
               <div>
-                <div className="font-medium text-blue-700 dark:text-blue-300 text-xs">Date</div>
+                <div className="font-medium text-blue-700 dark:text-blue-300 text-xs mb-0.5">Date</div>
                 <div>{formatDate(selectedForMatch.date)}</div>
               </div>
               <div>
-                <div className="font-medium text-blue-700 dark:text-blue-300 text-xs">Client / Depositor</div>
+                <div className="font-medium text-blue-700 dark:text-blue-300 text-xs mb-0.5">Client / Depositor</div>
                 {selectedForMatch.name && <div className="truncate" title={selectedForMatch.name}>{selectedForMatch.name}</div>}
                 {selectedForMatch.depositor && (
-                  <div className={selectedForMatch.name ? 'text-xs' : ''} title={selectedForMatch.depositor}>
+                  <div className={selectedForMatch.name ? 'text-xs truncate' : 'truncate'} title={selectedForMatch.depositor}>
                     {selectedForMatch.depositor}
                   </div>
                 )}
                 {!selectedForMatch.name && !selectedForMatch.depositor && <div>-</div>}
               </div>
               <div>
-                <div className="font-medium text-blue-700 dark:text-blue-300 text-xs">Car</div>
+                <div className="font-medium text-blue-700 dark:text-blue-300 text-xs mb-0.5">Car</div>
                 <div className="truncate">{selectedForMatch.car || '-'}</div>
               </div>
               <div>
-                <div className="font-medium text-blue-700 dark:text-blue-300 text-xs">Method</div>
+                <div className="font-medium text-blue-700 dark:text-blue-300 text-xs mb-0.5">Method</div>
                 <div className="truncate">{selectedForMatch.payment_method || '-'}</div>
               </div>
               <div>
-                <div className="font-medium text-blue-700 dark:text-blue-300 text-xs">Amount</div>
+                <div className="font-medium text-blue-700 dark:text-blue-300 text-xs mb-0.5">Amount</div>
                 <div className="font-semibold">{formatCurrency(selectedForMatch.value)}</div>
               </div>
               <div>
-                <div className="font-medium text-blue-700 dark:text-blue-300 text-xs">Source</div>
+                <div className="font-medium text-blue-700 dark:text-blue-300 text-xs mb-0.5">Status</div>
+                <div className="truncate">{selectedForMatch.status}</div>
+              </div>
+              <div>
+                <div className="font-medium text-blue-700 dark:text-blue-300 text-xs mb-0.5">Source</div>
                 <div className="truncate text-xs" title={selectedForMatch.source}>{selectedForMatch.source}</div>
               </div>
             </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setSelectedForMatch(null)}
-              className="h-8 px-3 whitespace-nowrap"
-            >
-              Cancel
-            </Button>
           </div>
         </Card>
       )}
+
+      <EditTransactionModal
+        isOpen={editModalOpen}
+        onClose={() => {
+          setEditModalOpen(false);
+          setTransactionToEdit(null);
+        }}
+        onConfirm={(updates) => {
+          if (transactionToEdit) {
+            editTransactionMutation.mutate({ transactionId: transactionToEdit.id, updates });
+          }
+        }}
+        transaction={transactionToEdit}
+      />
 
       <DeleteTransactionModal
         isOpen={deleteModalOpen}
@@ -727,6 +768,10 @@ export default function Transactions() {
               setDeleteModalMode('view');
               setDeleteModalOpen(true);
             }}
+            onEdit={(t) => {
+              setTransactionToEdit(t);
+              setEditModalOpen(true);
+            }}
             statusFilter={statusFilter}
           />
         ))}
@@ -756,6 +801,7 @@ function TransactionCard({
   allTransactions,
   onDelete,
   onViewDeleteReason,
+  onEdit,
   statusFilter,
 }: {
   transaction: Transaction;
@@ -766,6 +812,7 @@ function TransactionCard({
   allTransactions: Transaction[];
   onDelete: (transaction: Transaction) => void;
   onViewDeleteReason: (transaction: Transaction) => void;
+  onEdit: (transaction: Transaction) => void;
   statusFilter: ReconciliationStatus | 'all' | 'deleted';
 }) {
   const [showMatch, setShowMatch] = useState(false);
@@ -912,14 +959,24 @@ function TransactionCard({
               </Button>
             )}
             {!transaction.is_deleted && transaction.status !== 'reconciled' && (
-              <Button
-                size="icon"
-                variant="ghost"
-                onClick={() => onDelete(transaction)}
-                title="Delete transaction"
-              >
-                <Trash2 className="h-4 w-4" />
-              </Button>
+              <>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={() => onEdit(transaction)}
+                  title="Edit transaction"
+                >
+                  <Pencil className="h-4 w-4" />
+                </Button>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={() => onDelete(transaction)}
+                  title="Delete transaction"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </>
             )}
           </div>
         </div>
