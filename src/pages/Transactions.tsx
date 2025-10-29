@@ -168,16 +168,19 @@ export default function Transactions() {
       }
 
       if (appliedSearchTerm) {
-        // Use or() with ilike - PostgREST expects * as wildcard in pattern
-        const pattern = `*${appliedSearchTerm}*`;
-        query = query.or(
-          `name.ilike.${pattern},` +
-          `depositor.ilike.${pattern},` +
-          `car.ilike.${pattern},` +
-          `historical_text.ilike.${pattern},` +
-          `source.ilike.${pattern},` +
-          `value.ilike.${pattern}`
-        );
+        // Use filter() method with proper PostgREST or syntax
+        // According to PostgREST docs, or() needs proper pattern format
+        const orFilter = [
+          `name.ilike.*${appliedSearchTerm}*`,
+          `depositor.ilike.*${appliedSearchTerm}*`,
+          `car.ilike.*${appliedSearchTerm}*`,
+          `historical_text.ilike.*${appliedSearchTerm}*`,
+          `source.ilike.*${appliedSearchTerm}*`,
+          `value::text.ilike.*${appliedSearchTerm}*`
+        ].join(',');
+        
+        // Use .filter() instead of .or() to pass raw filter string
+        query = query.filter('or', `(${orFilter})`);
       }
 
       const { data, error } = await query.range(start, end);
