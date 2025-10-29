@@ -30,8 +30,20 @@ export function EditTransactionModal({
   const [source, setSource] = useState('');
   const datePickerRef = useRef<HTMLInputElement>(null);
 
+  // Standard payment methods that should always be available
+  const standardPaymentMethods = [
+    'Cash',
+    'Credit Card',
+    'Deposit',
+    'Zelle',
+    'Other',
+    'Wire Transfer',
+    'Stripe receipt',
+    'Debt',
+  ];
+
   // Fetch distinct payment methods from database
-  const { data: paymentMethods = [] } = useQuery<string[]>({
+  const { data: dbPaymentMethods = [] } = useQuery<string[]>({
     queryKey: ['payment-methods'],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -49,6 +61,12 @@ export function EditTransactionModal({
     staleTime: 5 * 60 * 1000, // Cache for 5 minutes
   });
 
+  // Combine standard methods with database methods, removing duplicates
+  const paymentMethods = [
+    ...standardPaymentMethods,
+    ...dbPaymentMethods.filter(method => !standardPaymentMethods.includes(method))
+  ];
+
   // Fetch distinct sources from database
   const { data: sources = [] } = useQuery<string[]>({
     queryKey: ['transaction-sources'],
@@ -56,12 +74,13 @@ export function EditTransactionModal({
       const { data, error } = await supabase
         .from('transactions')
         .select('source')
+        .not('source', 'is', null)
         .order('source');
       
       if (error) throw error;
       
-      // Get unique sources
-      const unique = [...new Set(data.map(t => t.source))];
+      // Get unique sources and filter out empty strings
+      const unique = [...new Set(data.map(t => t.source).filter(s => s && s.trim()))];
       return unique;
     },
     staleTime: 5 * 60 * 1000, // Cache for 5 minutes

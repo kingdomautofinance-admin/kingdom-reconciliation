@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { FileSpreadsheet, Link as LinkIcon, Unlink, RefreshCw } from 'lucide-react';
 import { formatDate } from '@/lib/utils';
 import { queryClient } from '@/lib/queryClient';
-import type { SheetConnection } from '@/lib/database.types';
+import type { SheetConnection, ImportHistory } from '@/lib/database.types';
 import { detectDuplicates } from '@/lib/parsers';
 import { autoReconcileAll } from '@/lib/reconciliation';
 import {
@@ -120,6 +120,26 @@ export function GoogleSheetsConnection() {
     refetchOnMount: false,
     refetchInterval: false,
     staleTime: 5 * 60 * 1000,
+  });
+
+  // Fetch import history
+  const { data: importHistory } = useQuery<ImportHistory[]>({
+    queryKey: ['import-history', connection?.spreadsheet_id],
+    queryFn: async () => {
+      if (!connection?.spreadsheet_id) return [];
+      
+      const { data, error } = await supabase
+        .from('import_history')
+        .select('*')
+        .eq('spreadsheet_id', connection.spreadsheet_id)
+        .order('import_started_at', { ascending: false })
+        .limit(10);
+
+      if (error) throw error;
+      return data || [];
+    },
+    enabled: !!connection?.spreadsheet_id,
+    staleTime: 30 * 1000, // Cache for 30 seconds
   });
 
   const saveCredentialsMutation = useMutation({
@@ -270,11 +290,38 @@ export function GoogleSheetsConnection() {
       }
 
       setSyncStatus('Syncing...');
-      await syncData(connection.spreadsheet_id);
+      
+      try {
+        await syncData(connection.spreadsheet_id);
+      } catch (error: any) {
+        // Try to update import history with error if it exists
+        const { data: failedImport } = await supabase
+          .from('import_history')
+          .select('*')
+          .eq('spreadsheet_id', connection.spreadsheet_id)
+          .eq('status', 'in_progress')
+          .order('import_started_at', { ascending: false })
+          .limit(1)
+          .single();
+          
+        if (failedImport) {
+          await supabase
+            .from('import_history')
+            .update({
+              status: 'failed',
+              error_message: error.message || 'Unknown error',
+              import_completed_at: new Date().toISOString(),
+            })
+            .eq('id', failedImport.id);
+        }
+        
+        throw error;
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['sheet-connection'] });
       queryClient.invalidateQueries({ queryKey: ['transactions'] });
+      queryClient.invalidateQueries({ queryKey: ['import-history'] });
       setSyncStatus('Sync completed!');
       setTimeout(() => setSyncStatus(''), 3000);
     },
@@ -285,6 +332,22 @@ export function GoogleSheetsConnection() {
 
   async function syncData(spreadsheetId: string) {
     setSyncStatus('Fetching spreadsheet data...');
+    const importStartTime = new Date().toISOString();
+
+    // Create import history record
+    const { data: historyRecord, error: historyError } = await supabase
+      .from('import_history')
+      .insert({
+        spreadsheet_id: spreadsheetId,
+        status: 'in_progress',
+        import_started_at: importStartTime,
+      })
+      .select()
+      .single();
+
+    if (historyError) {
+      console.error('Failed to create import history:', historyError);
+    }
 
     const rows = await fetchSpreadsheetData(spreadsheetId);
 
@@ -380,6 +443,20 @@ export function GoogleSheetsConnection() {
         })
         .eq('spreadsheet_id', spreadsheetId);
 
+      // Update import history
+      if (historyRecord) {
+        await supabase
+          .from('import_history')
+          .update({
+            status: 'success',
+            import_completed_at: new Date().toISOString(),
+            total_records_processed: newTransactions.length,
+            records_imported: 0,
+            duplicates_skipped: newTransactions.length,
+          })
+          .eq('id', historyRecord.id);
+      }
+
       setSyncStatus('No new transactions to import');
       return;
     }
@@ -404,6 +481,20 @@ export function GoogleSheetsConnection() {
         updated_at: new Date().toISOString(),
       })
       .eq('spreadsheet_id', spreadsheetId);
+
+    // Update import history with success
+    if (historyRecord) {
+      await supabase
+        .from('import_history')
+        .update({
+          status: 'success',
+          import_completed_at: new Date().toISOString(),
+          total_records_processed: newTransactions.length,
+          records_imported: uniqueTransactions.length,
+          duplicates_skipped: newTransactions.length - uniqueTransactions.length,
+        })
+        .eq('id', historyRecord.id);
+    }
   }
 
   if (showCredentialsForm) {
@@ -581,6 +672,54 @@ export function GoogleSheetsConnection() {
             }`}
           >
             {syncStatus}
+          </div>
+        )}
+
+        {importHistory && importHistory.length > 0 && (
+          <div className="space-y-2 pt-2 border-t">
+            <label className="text-xs font-semibold text-muted-foreground">
+              Import History
+            </label>
+            <div className="space-y-2">
+              {importHistory.map((record) => (
+                <div
+                  key={record.id}
+                  className="bg-muted/30 rounded-md p-2 text-xs space-y-1"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-medium">
+                      {formatDate(record.import_started_at)}
+                    </span>
+                    <Badge
+                      variant={record.status === 'success' ? 'default' : 'destructive'}
+                      className="text-xs h-5"
+                    >
+                      {record.status}
+                    </Badge>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 text-muted-foreground">
+                    <div>
+                      <span className="font-medium text-foreground">
+                        {record.records_imported}
+                      </span>{' '}
+                      imported
+                    </div>
+                    <div>
+                      <span className="font-medium text-foreground">
+                        {record.duplicates_skipped}
+                      </span>{' '}
+                      skipped
+                    </div>
+                    <div>
+                      <span className="font-medium text-foreground">
+                        {record.total_records_processed}
+                      </span>{' '}
+                      total
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </div>
