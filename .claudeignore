@@ -1,0 +1,38 @@
+# Dependencies and build artifacts
+node_modules/
+dist/
+build/
+.cache/
+
+# Lock files (very long and not needed for context)
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Archive folder
+archive/
+
+# Database types (auto-generated)
+src/lib/database.types.ts
+
+# Environment files
+.env
+.env.local
+.env.production
+.env.development
+
+# Logs
+*.log
+logs/
+
+# IDE and system files
+.DS_Store
+.vscode/
+.idea/
+
+# Test data files
+*.csv
+
+# Git files
+.git/
+.gitignore
