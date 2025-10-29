@@ -22,6 +22,14 @@ const escapeForIlike = (term) =>
     .replace(/_/g, '\\_')
     .replace(/%/g, '\\%');
 
+const buildAmountCondition = (rawTerm) => {
+  const digitsOnly = rawTerm.replace(/[^\d.-]/g, '');
+  if (!digitsOnly) return null;
+  const numericValue = Number(digitsOnly);
+  if (Number.isNaN(numericValue)) return null;
+  return `value.eq.${encodeURIComponent(numericValue.toString())}`;
+};
+
 function parseArgs(argv) {
   const args = {
     term: null,
@@ -126,10 +134,15 @@ async function main() {
       `car.ilike.${searchPattern}`,
       `historical_text.ilike.${searchPattern}`,
       `source.ilike.${searchPattern}`,
-      `value::text.ilike.${searchPattern}`,
-    ].join(',');
-    query = query.or(orConditions);
-    console.log('OR conditions:', orConditions);
+    ];
+
+    const amountCondition = buildAmountCondition(args.term);
+    if (amountCondition) {
+      orConditions.push(amountCondition);
+    }
+
+    query = query.or(orConditions.join(','));
+    console.log('OR conditions:', orConditions.join(','));
   }
 
   const { data, error } = await query.range(args.offset, args.offset + args.limit - 1);

@@ -24,6 +24,14 @@ const TRANSACTIONS_PER_PAGE = 50;
 const escapeForIlike = (term: string) =>
   term.replace(/([*\\])/g, '\\$1').replace(/,/g, '\\,').replace(/_/g, '\\_').replace(/%/g, '\\%');
 
+const buildAmountCondition = (rawTerm: string) => {
+  const digitsOnly = rawTerm.replace(/[^\d.-]/g, '');
+  if (!digitsOnly) return null;
+  const numericValue = Number(digitsOnly);
+  if (Number.isNaN(numericValue)) return null;
+  return `value.eq.${encodeURIComponent(numericValue.toString())}`;
+};
+
 export default function KingdomTransactions() {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<ReconciliationStatus | 'all' | 'kingdom' | 'deleted'>('all');
@@ -162,10 +170,14 @@ export default function KingdomTransactions() {
           `car.ilike.${searchPattern}`,
           `historical_text.ilike.${searchPattern}`,
           `source.ilike.${searchPattern}`,
-          `value::text.ilike.${searchPattern}`
-        ].join(',');
+        ];
+
+        const amountCondition = buildAmountCondition(appliedSearchTerm);
+        if (amountCondition) {
+          orConditions.push(amountCondition);
+        }
         
-        query = query.or(orConditions);
+        query = query.or(orConditions.join(','));
       }
 
       const { data, error } = await query.range(start, end);
