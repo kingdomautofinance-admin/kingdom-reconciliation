@@ -168,7 +168,18 @@ export default function Transactions() {
       }
 
       if (appliedSearchTerm) {
-        query = query.or(`name.ilike.%${appliedSearchTerm}%,depositor.ilike.%${appliedSearchTerm}%,car.ilike.%${appliedSearchTerm}%,historical_text.ilike.%${appliedSearchTerm}%,source.ilike.%${appliedSearchTerm}%,value.ilike.%${appliedSearchTerm}%`);
+        // Escape special ILIKE characters: %, _, \
+        const escaped = appliedSearchTerm.replace(/[%_\\]/g, '\\$&');
+        // Build individual filters
+        const filters = [
+          `name.ilike.*${escaped}*`,
+          `depositor.ilike.*${escaped}*`,
+          `car.ilike.*${escaped}*`,
+          `historical_text.ilike.*${escaped}*`,
+          `source.ilike.*${escaped}*`,
+          `value.ilike.*${escaped}*`
+        ];
+        query = query.or(filters.join(','));
       }
 
       const { data, error } = await query.range(start, end);
