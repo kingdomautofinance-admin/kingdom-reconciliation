@@ -21,6 +21,9 @@ import { DeleteTransactionModal } from '@/components/DeleteTransactionModal';
 
 const TRANSACTIONS_PER_PAGE = 50;
 
+const escapeForIlike = (term: string) =>
+  term.replace(/([\\%_])/g, '\\$1').replace(/,/g, '\\,');
+
 export default function KingdomTransactions() {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<ReconciliationStatus | 'all' | 'kingdom' | 'deleted'>('all');
@@ -151,13 +154,15 @@ export default function KingdomTransactions() {
       if (appliedSearchTerm) {
         // Build OR conditions for searching across multiple columns
         // The .or() method automatically wraps conditions in parentheses
+        const sanitizedTerm = escapeForIlike(appliedSearchTerm);
+        const searchPattern = `%${sanitizedTerm}%`;
         const orConditions = [
-          `name.ilike.*${appliedSearchTerm}*`,
-          `depositor.ilike.*${appliedSearchTerm}*`,
-          `car.ilike.*${appliedSearchTerm}*`,
-          `historical_text.ilike.*${appliedSearchTerm}*`,
-          `source.ilike.*${appliedSearchTerm}*`,
-          `value::text.ilike.*${appliedSearchTerm}*`
+          `name.ilike.${searchPattern}`,
+          `depositor.ilike.${searchPattern}`,
+          `car.ilike.${searchPattern}`,
+          `historical_text.ilike.${searchPattern}`,
+          `source.ilike.${searchPattern}`,
+          `value::text.ilike.${searchPattern}`
         ].join(',');
         
         query = query.or(orConditions);
