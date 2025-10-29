@@ -22,7 +22,7 @@ import { DeleteTransactionModal } from '@/components/DeleteTransactionModal';
 const TRANSACTIONS_PER_PAGE = 50;
 
 const escapeForIlike = (term: string) =>
-  term.replace(/([\\%_])/g, '\\$1').replace(/,/g, '\\,');
+  term.replace(/([*\\])/g, '\\$1').replace(/,/g, '\\,').replace(/_/g, '\\_').replace(/%/g, '\\%');
 
 export default function KingdomTransactions() {
   const [searchTerm, setSearchTerm] = useState('');
@@ -155,7 +155,7 @@ export default function KingdomTransactions() {
         // Build OR conditions for searching across multiple columns
         // The .or() method automatically wraps conditions in parentheses
         const sanitizedTerm = escapeForIlike(appliedSearchTerm);
-        const searchPattern = `%${sanitizedTerm}%`;
+        const searchPattern = `*${sanitizedTerm}*`;
         const orConditions = [
           `name.ilike.${searchPattern}`,
           `depositor.ilike.${searchPattern}`,
