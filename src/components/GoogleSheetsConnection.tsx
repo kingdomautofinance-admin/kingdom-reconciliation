@@ -321,7 +321,7 @@ export function GoogleSheetsConnection() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['sheet-connection'] });
       queryClient.invalidateQueries({ queryKey: ['transactions'] });
-      queryClient.invalidateQueries({ queryKey: ['import-history'] });
+      queryClient.invalidateQueries({ queryKey: ['import-history', connection?.spreadsheet_id] });
       setSyncStatus('Sync completed!');
       setTimeout(() => setSyncStatus(''), 3000);
     },
