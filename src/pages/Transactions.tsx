@@ -168,18 +168,16 @@ export default function Transactions() {
       }
 
       if (appliedSearchTerm) {
-        // Escape special ILIKE characters: %, _, \
-        const escaped = appliedSearchTerm.replace(/[%_\\]/g, '\\$&');
-        // Build individual filters
-        const filters = [
-          `name.ilike.*${escaped}*`,
-          `depositor.ilike.*${escaped}*`,
-          `car.ilike.*${escaped}*`,
-          `historical_text.ilike.*${escaped}*`,
-          `source.ilike.*${escaped}*`,
-          `value.ilike.*${escaped}*`
-        ];
-        query = query.or(filters.join(','));
+        // Use or() with ilike - PostgREST expects * as wildcard in pattern
+        const pattern = `*${appliedSearchTerm}*`;
+        query = query.or(
+          `name.ilike.${pattern},` +
+          `depositor.ilike.${pattern},` +
+          `car.ilike.${pattern},` +
+          `historical_text.ilike.${pattern},` +
+          `source.ilike.${pattern},` +
+          `value.ilike.${pattern}`
+        );
       }
 
       const { data, error } = await query.range(start, end);
