@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Bell, Check, AlertCircle, CloudUpload, Info } from 'lucide-react';
+import { Bell, Check, AlertCircle, Cloud, Info } from 'lucide-react';
 import { useLocation } from 'wouter';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -9,7 +9,7 @@ import { cn } from '@/lib/utils';
 
 const notificationIcon = (type: Notification['type']) => {
   if (type === 'reconciliation') return AlertCircle;
-  if (type === 'import') return CloudUpload;
+  if (type === 'import') return Cloud;
   return Info;
 };
 
