@@ -999,12 +999,12 @@ export function GoogleSheetsConnectionServiceAccount() {
                     <label className="text-xs font-medium text-muted-foreground">
                       Google Sheets URL
                     </label>
-                    <input
+                    <Input
                       type="url"
                       value={spreadsheetUrl}
                       onChange={(e) => setSpreadsheetUrl(e.target.value)}
                       placeholder="https://docs.google.com/spreadsheets/d/..."
-                      className="w-full px-3 py-2 text-sm border rounded-md"
+                      className="text-sm"
                     />
                   </div>
 
