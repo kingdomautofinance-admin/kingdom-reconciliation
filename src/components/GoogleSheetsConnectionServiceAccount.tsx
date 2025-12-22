@@ -971,12 +971,12 @@ export function GoogleSheetsConnectionServiceAccount() {
                         <label className="text-xs font-medium text-muted-foreground">
                           Service Account Email
                         </label>
-                        <input
+                        <Input
                           type="email"
                           value={serviceAccountEmail}
                           onChange={(e) => setServiceAccountEmail(e.target.value)}
                           placeholder="your-service-account@project.iam.gserviceaccount.com"
-                          className="w-full px-3 py-2 text-sm border rounded-md"
+                          className="text-sm"
                         />
                       </div>
 
@@ -989,7 +989,7 @@ export function GoogleSheetsConnectionServiceAccount() {
                           onChange={(e) => setServiceAccountKey(e.target.value)}
                           placeholder="-----BEGIN PRIVATE KEY-----&#10;...&#10;-----END PRIVATE KEY-----"
                           rows={6}
-                          className="w-full px-3 py-2 text-sm border rounded-md font-mono"
+                          className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 font-mono"
                         />
                       </div>
                     </div>

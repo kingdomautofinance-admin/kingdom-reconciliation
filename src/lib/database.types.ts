@@ -21,6 +21,8 @@ export interface Database {
           import_completed_at: string | null
           status: string
           error_message: string | null
+          filter_start_date: string | null
+          filter_end_date: string | null
           created_at: string
         }
         Insert: {
@@ -34,6 +36,8 @@ export interface Database {
           import_completed_at?: string | null
           status?: string
           error_message?: string | null
+          filter_start_date?: string | null
+          filter_end_date?: string | null
           created_at?: string
         }
         Update: {
@@ -47,6 +51,8 @@ export interface Database {
           import_completed_at?: string | null
           status?: string
           error_message?: string | null
+          filter_start_date?: string | null
+          filter_end_date?: string | null
           created_at?: string
         }
       }
@@ -60,6 +66,10 @@ export interface Database {
           access_token: string | null
           refresh_token: string | null
           token_expires_at: string | null
+          service_account_email: string | null
+          service_account_key: string | null
+          google_client_id: string | null
+          google_api_key: string | null
           is_active: boolean
           last_sync_at: string | null
           last_sync_records: number
@@ -69,12 +79,16 @@ export interface Database {
         Insert: {
           id?: string
           user_id?: string | null
-          spreadsheet_id: string
-          spreadsheet_url: string
+          spreadsheet_id?: string
+          spreadsheet_url?: string
           spreadsheet_name?: string | null
           access_token?: string | null
           refresh_token?: string | null
           token_expires_at?: string | null
+          service_account_email?: string | null
+          service_account_key?: string | null
+          google_client_id?: string | null
+          google_api_key?: string | null
           is_active?: boolean
           last_sync_at?: string | null
           last_sync_records?: number
@@ -90,6 +104,10 @@ export interface Database {
           access_token?: string | null
           refresh_token?: string | null
           token_expires_at?: string | null
+          service_account_email?: string | null
+          service_account_key?: string | null
+          google_client_id?: string | null
+          google_api_key?: string | null
           is_active?: boolean
           last_sync_at?: string | null
           last_sync_records?: number

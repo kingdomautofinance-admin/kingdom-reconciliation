@@ -856,60 +856,60 @@ function TransactionCard({
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div className="flex-1 w-full grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-4">
             <div>
-              <div className="text-sm text-muted-foreground">Date</div>
-              <div className="font-medium">{formatDate(transaction.date)}</div>
+              <div className="text-xs text-muted-foreground">Date</div>
+              <div className="font-medium text-xs">{formatDate(transaction.date)}</div>
             </div>
 
             <div>
-              <div className="text-sm text-muted-foreground">Client / Depositor</div>
+              <div className="text-xs text-muted-foreground">Client / Depositor</div>
               {transaction.name && (
-                <div className="font-medium truncate" title={`Client: ${transaction.name}`}>
+                <div className="font-medium text-xs truncate" title={`Client: ${transaction.name}`}>
                   {transaction.name}
                 </div>
               )}
               {transaction.depositor && (
                 <div
-                  className={`${transaction.name ? 'text-xs text-muted-foreground' : 'font-medium'} truncate`}
+                  className={`${transaction.name ? 'text-xs text-muted-foreground' : 'font-medium text-xs'} truncate`}
                   title={`Depositor: ${transaction.depositor}`}
                 >
                   {transaction.depositor}
                 </div>
               )}
               {!transaction.name && !transaction.depositor && (
-                <div className="font-medium">-</div>
+                <div className="font-medium text-xs">-</div>
               )}
             </div>
 
             <div>
-              <div className="text-sm text-muted-foreground">Car</div>
-              <div className="font-medium">{transaction.car || '-'}</div>
+              <div className="text-xs text-muted-foreground">Car</div>
+              <div className="font-medium text-xs">{transaction.car || '-'}</div>
             </div>
 
             <div>
-              <div className="text-sm text-muted-foreground">Method</div>
-              <div className="font-medium">{transaction.payment_method || '-'}</div>
+              <div className="text-xs text-muted-foreground">Method</div>
+              <div className="font-medium text-xs">{transaction.payment_method || '-'}</div>
             </div>
 
             <div>
-              <div className="text-sm text-muted-foreground">Amount</div>
-              <div className="font-medium">{formatCurrency(transaction.value)}</div>
+              <div className="text-xs text-muted-foreground">Amount</div>
+              <div className="font-medium text-xs">{formatCurrency(transaction.value)}</div>
             </div>
 
             <div>
-              <div className="text-sm text-muted-foreground">Status</div>
+              <div className="text-xs text-muted-foreground">Status</div>
               <Badge className={statusColors[transaction.status as keyof typeof statusColors]}>
                 {transaction.status}
               </Badge>
             </div>
 
             <div>
-              <div className="text-sm text-muted-foreground">Confidence</div>
+              <div className="text-xs text-muted-foreground">Confidence</div>
               {transaction.status === 'reconciled' && transaction.confidence !== null ? (
                 <Badge className={getConfidenceColor(transaction.confidence)}>
                   {transaction.confidence}%
                 </Badge>
               ) : (
-                <div className="font-medium text-muted-foreground">-</div>
+                <div className="font-medium text-xs text-muted-foreground">-</div>
               )}
             </div>
           </div>
