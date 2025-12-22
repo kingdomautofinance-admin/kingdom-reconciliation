@@ -665,7 +665,7 @@ export default function KingdomTransactions() {
                 Cancel
               </Button>
             </div>
-            <div className="grid grid-cols-7 gap-3 text-sm text-blue-800 dark:text-blue-200">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-3 text-sm text-blue-800 dark:text-blue-200">
               <div>
                 <div className="font-medium text-blue-700 dark:text-blue-300 text-xs mb-0.5">Date</div>
                 <div>{formatDate(selectedForMatch.date)}</div>
@@ -844,8 +844,8 @@ function TransactionCard({
   return (
     <Card className={`p-4 ${cardOpacity}`}>
       <div className="space-y-3">
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex-1 grid grid-cols-7 gap-4">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div className="flex-1 w-full grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-4">
             <div>
               <div className="text-sm text-muted-foreground">Date</div>
               <div className="font-medium">{formatDate(transaction.date)}</div>
@@ -921,6 +921,7 @@ function TransactionCard({
                 }}
                 disabled={isMatchInProgress || (selectedForMatch !== null && selectedForMatch.id !== transaction.id && (selectedForMatch.source === transaction.source))}
                 title={selectedForMatch?.id === transaction.id ? 'Cancel selection' : selectedForMatch ? 'Match with selected' : 'Select for matching'}
+                aria-label={selectedForMatch?.id === transaction.id ? 'Cancel selection' : selectedForMatch ? 'Match with selected' : 'Select for matching'}
               >
                 {isMatchInProgress && selectedForMatch?.id === transaction.id ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -935,6 +936,7 @@ function TransactionCard({
                 variant="ghost"
                 onClick={() => setShowMatch(!showMatch)}
                 title="View matched transaction"
+                aria-label="View matched transaction"
               >
                 <Eye className="h-4 w-4" />
               </Button>
@@ -945,6 +947,7 @@ function TransactionCard({
                 variant="ghost"
                 onClick={() => onViewDeleteReason(transaction)}
                 title="View deletion reason and restore"
+                aria-label="View deletion reason and restore"
               >
                 <Eye className="h-4 w-4" />
               </Button>
@@ -956,6 +959,7 @@ function TransactionCard({
                   variant="ghost"
                   onClick={() => onEdit(transaction)}
                   title="Edit transaction"
+                  aria-label="Edit transaction"
                 >
                   <Pencil className="h-4 w-4" />
                 </Button>
@@ -964,6 +968,7 @@ function TransactionCard({
                   variant="ghost"
                   onClick={() => onDelete(transaction)}
                   title="Delete transaction"
+                  aria-label="Delete transaction"
                 >
                   <Trash2 className="h-4 w-4" />
                 </Button>

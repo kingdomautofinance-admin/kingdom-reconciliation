@@ -20,7 +20,7 @@ import { useState, useRef } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { queryClient } from '@/lib/queryClient';
-import { parseWellsFargoCSV, detectDuplicates } from '@/lib/parsers';
+import { parseBankStatementCSV, detectDuplicates } from '@/lib/parsers';
 import { autoReconcileAllOptimized } from '@/lib/reconciliation-optimized';
 import { streamingInsert } from '@/lib/streaming-insert';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -34,27 +34,36 @@ export function BankUpload() {
   const [file, setFile] = useState<File | null>(null);
   const [uploadStatus, setUploadStatus] = useState<string>('');
   const [autoReconcile, setAutoReconcile] = useState<boolean>(false);
+  const [detectedBank, setDetectedBank] = useState<'wells_fargo' | 'delta' | null>(null);
   const cancelRef = useRef<boolean>(false);
 
   const uploadMutation = useMutation({
     mutationFn: async ({ file, runAutoReconcile }: { file: File; runAutoReconcile: boolean }) => {
       cancelRef.current = false;
 
-      const historyRecord = await startImportHistory(IMPORT_SOURCE_IDS.bank, {
-        spreadsheetName: 'Upload Bank Statement (Wells Fargo)',
-      });
-      const historyRecordId = historyRecord?.id ?? null;
-
       let totalRecordsProcessed = 0;
       let recordsImported = 0;
       let duplicatesSkipped = 0;
+      let historyRecordId: string | null = null;
 
       try {
         console.log('[BANK UPLOAD] Starting bank import process');
-        setUploadStatus('Parsing Wells Fargo CSV...');
+        setUploadStatus('Detecting bank format...');
 
-        const newTransactions = await parseWellsFargoCSV(file);
+        const result = await parseBankStatementCSV(file);
+        const { transactions: newTransactions, bankType } = result;
+        setDetectedBank(bankType);
+
+        const sourceId = bankType === 'delta' ? IMPORT_SOURCE_IDS.bank_delta : IMPORT_SOURCE_IDS.bank;
+        const bankLabel = bankType === 'delta' ? 'Delta Credit Union' : 'Wells Fargo';
+
+        const historyRecord = await startImportHistory(sourceId, {
+          spreadsheetName: `Upload Bank Statement (${bankLabel})`,
+        });
+        historyRecordId = historyRecord?.id ?? null;
+
         console.log('[BANK UPLOAD] Parse complete. Transactions found:', newTransactions.length);
+        setUploadStatus(`Parsing ${bankLabel} CSV...`);
 
         totalRecordsProcessed = newTransactions.length;
 
@@ -103,7 +112,7 @@ export function BankUpload() {
 
         setUploadStatus(`Importing ${uniqueTransactions.length} bank transactions...`);
 
-        const result = await streamingInsert(uniqueTransactions, {
+        const insertResult = await streamingInsert(uniqueTransactions, {
           batchSize: 500,
           onProgress: (progress) => {
             if (cancelRef.current) {
@@ -113,14 +122,14 @@ export function BankUpload() {
           }
         });
 
-        recordsImported = result.inserted;
-        const dbDuplicatesSkipped = result.duplicates;
+        recordsImported = insertResult.inserted;
+        const dbDuplicatesSkipped = insertResult.duplicates;
         duplicatesSkipped = baseDuplicates + dbDuplicatesSkipped;
 
         console.log('[BANK UPLOAD] Import complete');
         console.log('[BANK UPLOAD] Successfully imported:', recordsImported);
         console.log('[BANK UPLOAD] DB duplicates skipped:', dbDuplicatesSkipped);
-        console.log('[BANK UPLOAD] Errors:', result.errors);
+        console.log('[BANK UPLOAD] Errors:', insertResult.errors);
 
         if (cancelRef.current) {
           throw new Error('Upload cancelled by user');
@@ -201,6 +210,7 @@ export function BankUpload() {
     if (selectedFile) {
       setFile(selectedFile);
       setUploadStatus('');
+      setDetectedBank(null); // Reset detected bank when new file is selected
     }
   };
 
@@ -209,10 +219,11 @@ export function BankUpload() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <UploadIcon className="h-5 w-5" />
-          Upload Bank Statement (Wells Fargo)
+          Upload Bank Statement
+          {detectedBank && ` (${detectedBank === 'delta' ? 'Delta Credit Union' : 'Wells Fargo'})`}
         </CardTitle>
         <CardDescription>
-          Import Zelle and deposit transactions from Wells Fargo CSV
+          Import Zelle and deposit transactions from bank CSV statements
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -282,18 +293,25 @@ export function BankUpload() {
         />
 
         <div className="text-xs text-muted-foreground border-t pt-3 mt-3">
-          <p className="font-semibold mb-1">Expected Wells Fargo CSV columns:</p>
-          <ul className="list-disc list-inside space-y-1">
-            <li>Date</li>
-            <li>Amount</li>
-            <li>Depositor Name or Description</li>
-          </ul>
-          <p className="text-xs mt-2 opacity-75">
-            • Stripe Transfers: "STRIPE TRANSFER..." → Method: "Stripe receipt"<br/>
-            • Wire Transfers: "WT FED..." → Method: "Wire Transfer" (payments)<br/>
-            • Branch/Store: "DEPOSIT MADE IN A BRANCH/STORE" → Depositor: "Deposit"<br/>
-            • Zelle: Identified by depositor name<br/>
-            • Other deposits: Depositor = Full description from column D
+          <p className="font-semibold mb-2">Supported Bank Formats:</p>
+
+          <div className="mb-3">
+            <p className="font-medium">Wells Fargo CSV:</p>
+            <ul className="list-disc list-inside space-y-1 ml-2">
+              <li>Date, Amount, Depositor Name, Description</li>
+            </ul>
+          </div>
+
+          <div className="mb-3">
+            <p className="font-medium">Delta Credit Union CSV:</p>
+            <ul className="list-disc list-inside space-y-1 ml-2">
+              <li>Date, Amount Debit, Amount Credit, Memo, Description</li>
+              <li>Includes metadata rows (Account Name, Account Number, Date Range)</li>
+            </ul>
+          </div>
+
+          <p className="text-xs opacity-75">
+            Format is automatically detected. Supports Zelle, Wire Transfers, ACH/Stripe deposits, and cash deposits.
           </p>
         </div>
       </CardContent>

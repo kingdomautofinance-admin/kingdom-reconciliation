@@ -4,7 +4,7 @@ import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { FileSpreadsheet, Link as LinkIcon, Unlink, RefreshCw, Key, XCircle } from 'lucide-react';
+import { FileSpreadsheet, Link as LinkIcon, Unlink, RefreshCw, Key, XCircle, X, Sheet } from 'lucide-react';
 import { formatDate, formatUSDateInput, formatISODateToUS, parseUSDateToISO } from '@/lib/utils';
 import { queryClient } from '@/lib/queryClient';
 import type { SheetConnection, ImportHistory } from '@/lib/database.types';
@@ -17,6 +17,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { CheckCircle2 } from 'lucide-react';
 import { ImportHistorySection } from '@/components/ImportHistorySection';
+import { GoogleSheetsInstructions } from '@/components/GoogleSheetsInstructions';
 
 function resolveSpreadsheetId(value?: string | null) {
   if (!value) return null;
@@ -817,6 +818,11 @@ export function GoogleSheetsConnectionServiceAccount() {
                 </Button>
               </div>
 
+              <GoogleSheetsInstructions
+                serviceAccountEmail={connection?.service_account_email}
+                isConnected={true}
+              />
+
               {importOptionsSection}
 
               {/* Last Import Info */}
@@ -1213,6 +1219,11 @@ export function GoogleSheetsConnectionServiceAccount() {
 
         {importOptionsSection}
 
+        <GoogleSheetsInstructions
+          serviceAccountEmail={connection?.service_account_email}
+          isConnected={true}
+        />
+
         <div className="flex gap-2">
           <Button
             onClick={() => syncMutation.mutate()}
@@ -1301,6 +1312,11 @@ export function GoogleSheetsConnectionServiceAccount() {
           </p>
         </div>
       </div>
+
+      <GoogleSheetsInstructions
+        serviceAccountEmail={connection?.service_account_email}
+        isConnected={false}
+      />
 
       <div className="flex gap-2">
         <Button

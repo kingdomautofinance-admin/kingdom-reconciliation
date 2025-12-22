@@ -162,21 +162,21 @@ export function EditTransactionModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <Card className="w-full max-w-2xl p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-labelledby="edit-transaction-title">
+      <Card className="w-full max-w-[95vw] sm:max-w-2xl p-4 sm:p-6 space-y-4 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between">
-          <h2 className="text-xl font-semibold">Edit Transaction</h2>
+          <h2 id="edit-transaction-title" className="text-xl font-semibold">Edit Transaction</h2>
           <Button
             variant="ghost"
             size="icon"
             onClick={handleClose}
-            className="h-6 w-6"
+            aria-label="Close modal"
           >
             <X className="h-4 w-4" />
           </Button>
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="space-y-2">
             <label htmlFor="edit-date" className="text-sm font-medium">
               Date

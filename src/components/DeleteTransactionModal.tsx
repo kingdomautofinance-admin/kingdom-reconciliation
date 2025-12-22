@@ -54,17 +54,17 @@ export function DeleteTransactionModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <Card className="w-full max-w-md p-6 space-y-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-labelledby="delete-transaction-title">
+      <Card className="w-full max-w-[95vw] sm:max-w-md p-4 sm:p-6 space-y-4">
         <div className="flex items-center justify-between">
-          <h2 className="text-xl font-semibold">
+          <h2 id="delete-transaction-title" className="text-xl font-semibold">
             {mode === 'delete' ? 'Delete Transaction' : 'Deletion Reason'}
           </h2>
           <Button
             variant="ghost"
             size="icon"
             onClick={handleClose}
-            className="h-6 w-6"
+            aria-label="Close modal"
           >
             <X className="h-4 w-4" />
           </Button>

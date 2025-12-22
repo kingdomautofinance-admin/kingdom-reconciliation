@@ -32,6 +32,11 @@ export {
   isWellsFargoFormat,
   parseWellsFargoRow,
   parseWellsFargoCSV,
+  isDeltaFormat,
+  parseDeltaMemo,
+  parseDeltaRow,
+  parseDeltaCSV,
+  parseBankStatementCSV,
 } from './bank-parser';
 
 export {

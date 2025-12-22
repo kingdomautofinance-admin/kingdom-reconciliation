@@ -7,6 +7,7 @@ import type {
 
 export const IMPORT_SOURCE_IDS = {
   bank: 'bank_wells_fargo',
+  bank_delta: 'bank_delta',
   card: 'card_stripe',
   kingdom: 'kingdom_system',
 } as const;

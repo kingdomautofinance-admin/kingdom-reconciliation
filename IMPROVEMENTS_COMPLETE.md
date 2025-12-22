@@ -28,7 +28,7 @@ All improvements have been applied to **BOTH** `KingdomTransactions.tsx` AND `Tr
 - Easier to compare selected transaction with candidates
 - Fields maintain the same order throughout the interface
 
----
+----
 
 ### 2. In-App Toast Notifications ✅
 **New Files Created:**
