@@ -17,7 +17,7 @@ export default function Sidebar({ expanded, onToggle }: SidebarProps) {
     <aside
       className={cn(
         'hidden sm:flex sm:flex-col border-r border-border bg-card text-card-foreground transition-all duration-200 ease-out sticky top-0 h-screen',
-        expanded ? 'w-[13.75rem]' : 'w-16'
+        expanded ? 'w-[12.5rem]' : 'w-16'
       )}
     >
       <div className="flex flex-col items-center px-3 py-4">
@@ -42,11 +42,11 @@ export default function Sidebar({ expanded, onToggle }: SidebarProps) {
               <Link key={item.path} href={item.path}>
                 <a
                   className={cn(
-                    'group flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+                    'group flex items-center gap-3 rounded-lg text-sm font-medium transition-colors',
                     isActive
                       ? 'bg-accent text-accent-foreground'
                       : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground',
-                    !expanded && 'justify-center h-10 w-10 p-0'
+                    expanded ? 'px-3 py-2' : 'justify-center h-10 w-10 p-0'
                   )}
                   title={!expanded ? item.label : undefined}
                 >
@@ -68,11 +68,11 @@ export default function Sidebar({ expanded, onToggle }: SidebarProps) {
                   <Link key={item.path} href={item.path}>
                     <a
                       className={cn(
-                        'group flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+                        'group flex items-center gap-3 rounded-lg text-sm font-medium transition-colors',
                         isActive
                           ? 'bg-accent text-accent-foreground'
                           : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground',
-                        !expanded && 'justify-center h-10 w-10 p-0'
+                        expanded ? 'px-3 py-2' : 'justify-center h-10 w-10 p-0'
                       )}
                       title={!expanded ? item.label : undefined}
                     >

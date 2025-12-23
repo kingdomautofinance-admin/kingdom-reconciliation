@@ -5,6 +5,23 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Reconciliation System - Kingdom Auto Finance</title>
+    <script>
+      // Apply theme immediately to prevent flash
+      (function() {
+        function getCookie(name) {
+          const match = document.cookie.split('; ').find(item => item.startsWith(name + '='));
+          return match ? decodeURIComponent(match.split('=')[1]) : null;
+        }
+
+        const cookieTheme = getCookie('theme');
+        const storedTheme = localStorage.getItem('theme');
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+        const theme = cookieTheme || storedTheme || (prefersDark ? 'dark' : 'light');
+
+        document.documentElement.classList.add(theme);
+      })();
+    </script>
     <script src="https://apis.google.com/js/api.js"></script>
     <script src="https://accounts.google.com/gsi/client"></script>
   </head>

@@ -700,10 +700,16 @@ export default function AccountsReceivable() {
             Track dealership-collected payments and confirm transfers.
           </p>
         </div>
-        <Button onClick={exportCsv} disabled={receivables.length === 0}>
-          <Download className="h-4 w-4" />
-          Export CSV
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button onClick={autoMatchReceivables} disabled={receivables.length === 0}>
+            <Link2 className="h-4 w-4" />
+            Auto-match
+          </Button>
+          <Button variant="outline" onClick={exportCsv} disabled={receivables.length === 0}>
+            <Download className="h-4 w-4" />
+            Export CSV
+          </Button>
+        </div>
       </div>
 
       <Card className="p-4 space-y-3">
@@ -853,28 +859,28 @@ export default function AccountsReceivable() {
         </Button>
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <Button onClick={autoMatchReceivables} disabled={receivables.length === 0} size="sm">
-            <Link2 className="h-4 w-4" />
-            Auto-match
-          </Button>
-          <Button
-            onClick={() => setMatchModalOpen(true)}
-            disabled={selectedIds.size === 0}
-            size="sm"
-          >
-            <SlidersHorizontal className="h-4 w-4" />
-            Match selected ({selectedIds.size})
-          </Button>
-          <Button variant="ghost" onClick={clearSelection} disabled={selectedIds.size === 0} size="sm">
-            Clear selection
-          </Button>
-        </div>
-        <Button variant="outline" size="sm" onClick={selectAllOnPage}>
-          Select page
-        </Button>
-      </div>
+      {selectedIds.size > 0 && (
+        <Card className="p-3 bg-blue-50 dark:bg-blue-950 border-blue-200 dark:border-blue-800">
+          <div className="flex items-center justify-between">
+            <div className="text-sm font-medium text-blue-900 dark:text-blue-100">
+              {selectedIds.size} receivable{selectedIds.size > 1 ? 's' : ''} selected
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                onClick={() => setMatchModalOpen(true)}
+                disabled={selectedIds.size === 0}
+                size="sm"
+              >
+                <SlidersHorizontal className="h-4 w-4" />
+                Match selected
+              </Button>
+              <Button variant="ghost" onClick={clearSelection} size="sm">
+                Clear
+              </Button>
+            </div>
+          </div>
+        </Card>
+      )}
 
       <Card className="overflow-hidden">
         <div className="grid grid-cols-[32px_120px_140px_1fr_140px_120px_160px_120px_120px_120px_120px_40px] gap-3 border-b px-4 py-3 text-xs font-semibold text-muted-foreground">
