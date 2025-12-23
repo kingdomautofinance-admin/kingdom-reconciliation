@@ -8,6 +8,7 @@ import Transactions from './pages/Transactions';
 import KingdomTransactions from './pages/KingdomTransactions';
 import Reports from './pages/Reports';
 import AccountsReceivable from './pages/AccountsReceivable';
+import Upload from './pages/Upload';
 import Settings from './pages/Settings';
 import PasswordGate, { getAccessExpiry, hasValidAccess } from './components/auth/PasswordGate';
 
@@ -53,6 +54,7 @@ function App() {
           <Route path="/transactions" component={Transactions} />
           <Route path="/accounts-receivable" component={AccountsReceivable} />
           <Route path="/kingdom" component={KingdomTransactions} />
+          <Route path="/upload" component={Upload} />
           <Route path="/settings" component={Settings} />
           <Route>
             <div className="text-center py-12">
