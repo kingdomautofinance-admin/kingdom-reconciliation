@@ -20,18 +20,15 @@ export default function Sidebar({ expanded, onToggle }: SidebarProps) {
         expanded ? 'w-60' : 'w-16'
       )}
     >
-      <div className="flex h-16 items-center justify-between px-3">
-        <div className={cn('flex items-center gap-3 flex-1', expanded ? '' : 'justify-center')}>
+      <div className="flex flex-col items-center gap-3 px-3 py-4">
+        <div className="h-10 w-10 overflow-hidden">
           <img
             src={kingdomLogo}
             alt="Kingdom Auto Finance"
-            className={cn('h-8 w-auto', expanded ? '' : 'h-7')}
+            className="h-10 w-24 object-left object-cover"
           />
-          {expanded && (
-            <span className="text-sm font-semibold tracking-tight">Kingdom</span>
-          )}
         </div>
-        {expanded && (
+        {expanded ? (
           <Button
             variant="ghost"
             size="icon"
@@ -41,8 +38,7 @@ export default function Sidebar({ expanded, onToggle }: SidebarProps) {
           >
             <ChevronsLeft className="h-4 w-4" />
           </Button>
-        )}
-        {!expanded && (
+        ) : (
           <Button
             variant="ghost"
             size="icon"
