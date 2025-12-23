@@ -780,18 +780,6 @@ export default function AccountsReceivable() {
         </div>
 
         <div className="flex gap-2">
-          <Input
-            value={dealershipFilter}
-            onChange={(e) => setDealershipFilter(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                applyFilters();
-              }
-            }}
-            placeholder="Dealership"
-            className="w-40"
-          />
           <div className="relative">
             <Calendar className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
@@ -886,17 +874,15 @@ export default function AccountsReceivable() {
       )}
 
       <Card className="overflow-hidden">
-        <div className="grid grid-cols-[32px_100px_100px_1fr_120px_100px_120px_110px_100px_100px_100px_120px] gap-4 border-b px-4 py-3 text-xs font-semibold text-muted-foreground">
+        <div className="grid grid-cols-[32px_75px_40px_1fr_100px_70px_100px_90px_80px_100px] gap-3 border-b px-4 py-3 text-xs font-semibold text-muted-foreground">
           <span />
           <span>Date</span>
-          <span>Loan ID</span>
+          <span />
           <span>Client / Depositor</span>
           <span>Car</span>
           <span>Method</span>
           <span>Dealership</span>
           <span>Amount</span>
-          <span>Matched</span>
-          <span>Outstanding</span>
           <span>Status</span>
           <span>Actions</span>
         </div>
@@ -933,7 +919,7 @@ export default function AccountsReceivable() {
           return (
             <div
               key={receivable.id}
-              className="grid grid-cols-[32px_100px_100px_1fr_120px_100px_120px_110px_100px_100px_100px_120px] gap-4 border-b px-4 py-3 text-sm items-center"
+              className="grid grid-cols-[32px_75px_40px_1fr_100px_70px_100px_90px_80px_100px] gap-3 border-b px-4 py-3 text-sm items-center"
             >
               <div className="flex items-center">
                 <input
@@ -944,18 +930,13 @@ export default function AccountsReceivable() {
                 />
               </div>
               <div className="text-xs">{formatISODateToUS(receivable.date.slice(0, 10))}</div>
-              <div className="flex items-center gap-1 group">
-                <span className="font-medium truncate text-xs" title={receivable.loan_id}>
-                  {receivable.loan_id && receivable.loan_id.length > 6
-                    ? `${receivable.loan_id.substring(0, 3)}...`
-                    : receivable.loan_id}
-                </span>
+              <div className="flex items-center justify-center">
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
+                  className="h-6 w-6"
                   onClick={() => copyToClipboard(receivable.loan_id)}
-                  title="Copy Loan ID"
+                  title={`Copy Loan ID: ${receivable.loan_id}`}
                 >
                   <Copy className="h-3 w-3" />
                 </Button>
@@ -968,8 +949,6 @@ export default function AccountsReceivable() {
               <div className="text-xs truncate">{receivable.method || '—'}</div>
               <div className="text-xs truncate">{receivable.dealership || '—'}</div>
               <div className="font-medium text-xs text-right">{formatCurrency(toNumber(receivable.amount))}</div>
-              <div className="text-xs text-right">{formatCurrency(matched)}</div>
-              <div className="text-xs text-right">{formatCurrency(outstanding)}</div>
               <div className="flex items-center">
                 {renderStatusBadge(receivable.status)}
                 {alertTextParts.length > 0 && (
@@ -1001,7 +980,7 @@ export default function AccountsReceivable() {
                     <Eye className="h-3.5 w-3.5" />
                   </Button>
                 )}
-                {receivable.status === 'pending' && (
+                {receivable.status === 'pending' ? (
                   <>
                     <Button
                       size="icon"
@@ -1024,14 +1003,18 @@ export default function AccountsReceivable() {
                     <Button
                       size="icon"
                       variant="ghost"
-                      className="h-8 w-8 text-green-600 hover:text-green-700"
+                      className="h-8 w-8"
                       onClick={() => openOverrideModal(receivable, 'mark')}
                       title="Mark as received"
                     >
                       <CheckCircle2 className="h-3.5 w-3.5" />
                     </Button>
                   </>
-                )}
+                ) : receivable.status === 'received' ? (
+                  <div className="h-8 w-8 flex items-center justify-center" title="Received">
+                    <CheckCircle2 className="h-4 w-4 text-green-600" />
+                  </div>
+                ) : null}
               </div>
             </div>
           );
