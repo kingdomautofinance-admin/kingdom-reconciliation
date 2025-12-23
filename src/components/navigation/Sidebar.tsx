@@ -20,35 +20,17 @@ export default function Sidebar({ expanded, onToggle }: SidebarProps) {
         expanded ? 'w-60' : 'w-16'
       )}
     >
-      <div className="flex flex-col items-center gap-3 px-3 py-4">
-        <div className="h-10 w-10 overflow-hidden">
+      <div className="flex flex-col items-center px-3 py-4">
+        <div className={cn('overflow-hidden', expanded ? 'h-10 w-40' : 'h-10 w-10')}>
           <img
             src={kingdomLogo}
             alt="Kingdom Auto Finance"
-            className="h-10 w-24 object-left object-cover"
+            className={cn(
+              'h-10 object-left object-cover',
+              expanded ? 'w-40' : 'w-24'
+            )}
           />
         </div>
-        {expanded ? (
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onToggle}
-            className="h-9 w-9"
-            aria-label="Collapse sidebar"
-          >
-            <ChevronsLeft className="h-4 w-4" />
-          </Button>
-        ) : (
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onToggle}
-            className="h-9 w-9"
-            aria-label="Expand sidebar"
-          >
-            <ChevronsRight className="h-4 w-4" />
-          </Button>
-        )}
       </div>
 
       <nav className="flex-1 px-2 pb-6 pt-4" aria-label="Primary">
@@ -100,6 +82,30 @@ export default function Sidebar({ expanded, onToggle }: SidebarProps) {
           })}
         </div>
       </nav>
+
+      <div className={cn('flex items-center justify-center px-3 pb-4', expanded ? '' : 'pt-2')}>
+        {expanded ? (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onToggle}
+            className="h-9 w-9"
+            aria-label="Collapse sidebar"
+          >
+            <ChevronsLeft className="h-4 w-4" />
+          </Button>
+        ) : (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onToggle}
+            className="h-9 w-9"
+            aria-label="Expand sidebar"
+          >
+            <ChevronsRight className="h-4 w-4" />
+          </Button>
+        )}
+      </div>
     </aside>
   );
 }
