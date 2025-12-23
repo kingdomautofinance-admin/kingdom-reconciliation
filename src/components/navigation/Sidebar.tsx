@@ -58,29 +58,31 @@ export default function Sidebar({ expanded, onToggle }: SidebarProps) {
           })}
         </div>
 
-        <div className="mt-6 border-t border-border pt-4">
-          {secondaryNavItems.map((item) => {
-            const isActive = location === item.path;
-            const Icon = item.icon;
-            return (
-              <Link key={item.path} href={item.path}>
-                <a
-                  className={cn(
-                    'group flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-                    isActive
-                      ? 'bg-accent text-accent-foreground'
-                      : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground',
-                    !expanded && 'justify-center px-2'
-                  )}
-                  title={!expanded ? item.label : undefined}
-                >
-                  <Icon className="h-4 w-4" />
-                  {expanded && <span>{item.label}</span>}
-                </a>
-              </Link>
-            );
-          })}
-        </div>
+        {secondaryNavItems.length > 0 && (
+          <div className="mt-6 border-t border-border pt-4">
+            {secondaryNavItems.map((item) => {
+              const isActive = location === item.path;
+              const Icon = item.icon;
+              return (
+                <Link key={item.path} href={item.path}>
+                  <a
+                    className={cn(
+                      'group flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+                      isActive
+                        ? 'bg-accent text-accent-foreground'
+                        : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground',
+                      !expanded && 'justify-center px-2'
+                    )}
+                    title={!expanded ? item.label : undefined}
+                  >
+                    <Icon className="h-4 w-4" />
+                    {expanded && <span>{item.label}</span>}
+                  </a>
+                </Link>
+              );
+            })}
+          </div>
+        )}
       </nav>
 
       <div className={cn('mt-auto flex items-center justify-center px-3 pb-4', expanded ? '' : 'pt-2')}>

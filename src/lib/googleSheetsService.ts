@@ -4,6 +4,7 @@ interface FetchSheetsParams {
   spreadsheetId: string;
   serviceAccountEmail?: string;
   serviceAccountKey?: string;
+  sheetName?: string;
 }
 
 interface SheetData {

@@ -179,7 +179,7 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const { spreadsheetId, serviceAccountEmail, serviceAccountKey } = await req.json();
+    const { spreadsheetId, serviceAccountEmail, serviceAccountKey, sheetName } = await req.json();
 
     if (!spreadsheetId) {
       return new Response(
@@ -221,7 +221,8 @@ Deno.serve(async (req: Request) => {
       } else {
         console.log("No service account credentials, falling back to public CSV export");
 
-        const csvUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv&gid=0`;
+        const sheetParam = sheetName ? `&sheet=${encodeURIComponent(sheetName)}` : '';
+        const csvUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv${sheetParam}`;
 
         const response = await fetch(csvUrl, {
           redirect: "follow",
@@ -286,8 +287,9 @@ Deno.serve(async (req: Request) => {
 
     console.log("Fetching spreadsheet with service account:", spreadsheetId);
 
+    const range = sheetName ? `${sheetName}!A1:Z100000` : 'A1:Z100000';
     const sheetsResponse = await fetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/A1:Z100000`,
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}`,
       {
         headers: {
           'Authorization': `Bearer ${accessToken}`,

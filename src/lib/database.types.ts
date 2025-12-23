@@ -9,6 +9,123 @@ export type Json =
 export interface Database {
   public: {
     Tables: {
+      dealer_receivable_changes: {
+        Row: {
+          id: string
+          receivable_id: string
+          changed_at: string
+          field_diffs: Json
+          import_id: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          receivable_id: string
+          changed_at?: string
+          field_diffs?: Json
+          import_id?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          receivable_id?: string
+          changed_at?: string
+          field_diffs?: Json
+          import_id?: string | null
+          created_at?: string
+        }
+      }
+      dealer_receivable_matches: {
+        Row: {
+          id: string
+          receivable_id: string
+          transaction_id: string
+          matched_amount: string
+          match_type: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          receivable_id: string
+          transaction_id: string
+          matched_amount: string
+          match_type: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          receivable_id?: string
+          transaction_id?: string
+          matched_amount?: string
+          match_type?: string
+          created_at?: string
+        }
+      }
+      dealer_receivables: {
+        Row: {
+          id: string
+          loan_id: string
+          date: string
+          amount: string
+          car: string | null
+          client: string | null
+          depositor: string | null
+          method: string | null
+          dealership: string | null
+          status: string
+          received_at: string | null
+          manual_override_note: string | null
+          manual_override_at: string | null
+          sheet_order: number | null
+          source_sheet_tab: string | null
+          duplicate_check_hash: string | null
+          row_fingerprint: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          loan_id: string
+          date: string
+          amount: string
+          car?: string | null
+          client?: string | null
+          depositor?: string | null
+          method?: string | null
+          dealership?: string | null
+          status?: string
+          received_at?: string | null
+          manual_override_note?: string | null
+          manual_override_at?: string | null
+          sheet_order?: number | null
+          source_sheet_tab?: string | null
+          duplicate_check_hash?: string | null
+          row_fingerprint?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          loan_id?: string
+          date?: string
+          amount?: string
+          car?: string | null
+          client?: string | null
+          depositor?: string | null
+          method?: string | null
+          dealership?: string | null
+          status?: string
+          received_at?: string | null
+          manual_override_note?: string | null
+          manual_override_at?: string | null
+          sheet_order?: number | null
+          source_sheet_tab?: string | null
+          duplicate_check_hash?: string | null
+          row_fingerprint?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+      }
       import_history: {
         Row: {
           id: string
@@ -184,6 +301,18 @@ export interface Database {
 export type ImportHistory = Database['public']['Tables']['import_history']['Row'];
 export type InsertImportHistory = Database['public']['Tables']['import_history']['Insert'];
 export type UpdateImportHistory = Database['public']['Tables']['import_history']['Update'];
+
+export type DealerReceivable = Database['public']['Tables']['dealer_receivables']['Row'];
+export type InsertDealerReceivable = Database['public']['Tables']['dealer_receivables']['Insert'];
+export type UpdateDealerReceivable = Database['public']['Tables']['dealer_receivables']['Update'];
+
+export type DealerReceivableMatch = Database['public']['Tables']['dealer_receivable_matches']['Row'];
+export type InsertDealerReceivableMatch = Database['public']['Tables']['dealer_receivable_matches']['Insert'];
+export type UpdateDealerReceivableMatch = Database['public']['Tables']['dealer_receivable_matches']['Update'];
+
+export type DealerReceivableChange = Database['public']['Tables']['dealer_receivable_changes']['Row'];
+export type InsertDealerReceivableChange = Database['public']['Tables']['dealer_receivable_changes']['Insert'];
+export type UpdateDealerReceivableChange = Database['public']['Tables']['dealer_receivable_changes']['Update'];
 
 export type SheetConnection = Database['public']['Tables']['sheet_connections']['Row'];
 export type InsertSheetConnection = Database['public']['Tables']['sheet_connections']['Insert'];

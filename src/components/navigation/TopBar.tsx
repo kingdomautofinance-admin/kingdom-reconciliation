@@ -1,6 +1,5 @@
-import { Menu, Search, Moon, Sun } from 'lucide-react';
+import { Menu, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { useTheme } from '@/lib/useTheme';
 import QuickActions from '@/components/navigation/QuickActions';
 import NotificationCenter from '@/components/navigation/NotificationCenter';
 
@@ -10,8 +9,6 @@ type TopBarProps = {
 };
 
 export default function TopBar({ onOpenCommandBar, onOpenMobileMenu }: TopBarProps) {
-  const { theme, toggleTheme } = useTheme();
-
   return (
     <header className="sticky top-0 z-30 border-b border-border bg-background/90 backdrop-blur safe-top">
       <div className="flex h-16 items-center justify-between gap-4 px-6 sm:px-8 lg:px-12">
@@ -52,19 +49,6 @@ export default function TopBar({ onOpenCommandBar, onOpenMobileMenu }: TopBarPro
         <div className="flex items-center gap-2">
           <QuickActions />
           <NotificationCenter />
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={toggleTheme}
-            className="rounded-full"
-            aria-label={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
-          >
-            {theme === 'light' ? (
-              <Moon className="h-5 w-5" />
-            ) : (
-              <Sun className="h-5 w-5" />
-            )}
-          </Button>
         </div>
       </div>
     </header>

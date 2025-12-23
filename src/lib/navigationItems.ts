@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react';
-import { LayoutDashboard, List, Crown, BarChart3, Upload } from 'lucide-react';
+import { LayoutDashboard, List, Crown, BarChart3, Landmark, Settings } from 'lucide-react';
 
 export type NavItem = {
   label: string;
@@ -22,6 +22,12 @@ export const primaryNavItems: NavItem[] = [
     group: 'primary'
   },
   {
+    label: 'Accounts Receivable',
+    path: '/accounts-receivable',
+    icon: Landmark,
+    group: 'primary'
+  },
+  {
     label: 'Kingdom',
     path: '/kingdom',
     icon: Crown,
@@ -32,16 +38,17 @@ export const primaryNavItems: NavItem[] = [
     path: '/reports',
     icon: BarChart3,
     group: 'primary'
+  },
+  {
+    label: 'Settings',
+    path: '/settings',
+    icon: Settings,
+    group: 'primary'
   }
 ];
 
 export const secondaryNavItems: NavItem[] = [
-  {
-    label: 'Upload',
-    path: '/upload',
-    icon: Upload,
-    group: 'secondary'
-  }
+  
 ];
 
 export const navItems = [...primaryNavItems, ...secondaryNavItems];

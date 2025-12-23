@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { supabase } from '@/lib/supabase';
-import { DollarSign, CheckCircle2, Clock, AlertCircle } from 'lucide-react';
+import { DollarSign, CheckCircle2, Clock, AlertCircle, Landmark } from 'lucide-react';
 import { formatCurrency } from '@/lib/utils';
 
 export default function Dashboard() {
@@ -75,11 +75,36 @@ export default function Dashboard() {
         return allValues.reduce((sum, t) => sum + parseFloat(t.value), 0);
       };
 
-      // Get sum of values with pagination
-      const [totalValue, reconciledValue] = await Promise.all([
+      // Dealer receivables outstanding totals
+      const [totalValue, reconciledValue, receivablesResult, receivableMatchesResult] = await Promise.all([
         fetchAllValues(),
-        fetchAllValues('reconciled')
+        fetchAllValues('reconciled'),
+        supabase
+          .from('dealer_receivables')
+          .select('id, amount, dealership, status'),
+        supabase
+          .from('dealer_receivable_matches')
+          .select('receivable_id, matched_amount')
       ]);
+
+      if (receivablesResult.error) throw receivablesResult.error;
+      if (receivableMatchesResult.error) throw receivableMatchesResult.error;
+
+      const matchTotals = new Map<string, number>();
+      (receivableMatchesResult.data || []).forEach(match => {
+        matchTotals.set(
+          match.receivable_id,
+          (matchTotals.get(match.receivable_id) || 0) + parseFloat(match.matched_amount)
+        );
+      });
+
+      let outstandingTotal = 0;
+      (receivablesResult.data || []).forEach(receivable => {
+        const matched = matchTotals.get(receivable.id) || 0;
+        const outstanding = Math.max(0, parseFloat(receivable.amount) - matched);
+        if (outstanding <= 0) return;
+        outstandingTotal += outstanding;
+      });
 
       return {
         total: totalResult.count || 0,
@@ -87,7 +112,8 @@ export default function Dashboard() {
         pendingLedger: pendingLedgerResult.count || 0,
         pendingStatement: pendingStatementResult.count || 0,
         totalValue,
-        reconciledValue
+        reconciledValue,
+        outstandingTotal
       };
     },
   });
@@ -169,6 +195,19 @@ export default function Dashboard() {
               {stats.pendingStatement.toLocaleString()}
             </div>
             <p className="text-xs text-muted-foreground mt-1">Unmatched payments</p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Outstanding Receivables</CardTitle>
+            <Landmark className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{formatCurrency(stats.outstandingTotal)}</div>
+            <a href="/accounts-receivable" className="mt-2 inline-flex text-xs text-blue-600 hover:underline">
+              View all
+            </a>
           </CardContent>
         </Card>
       </div>
