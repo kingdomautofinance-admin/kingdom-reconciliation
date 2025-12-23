@@ -76,7 +76,7 @@ export default function AccountsReceivable() {
   const initialDealership = urlParams.get('dealership') || '';
   const initialSearch = urlParams.get('q') || '';
 
-  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'received'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'received' | 'deleted'>('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [dealershipFilter, setDealershipFilter] = useState(initialDealership);
   const [dateFrom, setDateFrom] = useState('');
@@ -108,6 +108,12 @@ export default function AccountsReceivable() {
 
   const [allocationsTarget, setAllocationsTarget] = useState<DealerReceivable | null>(null);
   const [matchModalOpen, setMatchModalOpen] = useState(false);
+
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [receivableToEdit, setReceivableToEdit] = useState<DealerReceivable | null>(null);
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [receivableToDelete, setReceivableToDelete] = useState<DealerReceivable | null>(null);
+  const [deleteModalMode, setDeleteModalMode] = useState<'delete' | 'view'>('delete');
 
   const applyFilters = () => {
     setAppliedFilters({
@@ -163,8 +169,13 @@ export default function AccountsReceivable() {
         .order('date', { ascending: false })
         .order('sheet_order', { ascending: false, nullsFirst: false });
 
-      if (statusFilter !== 'all') {
-        query = query.eq('status', statusFilter);
+      if (statusFilter === 'deleted') {
+        query = query.eq('is_deleted', true);
+      } else {
+        query = query.eq('is_deleted', false);
+        if (statusFilter !== 'all') {
+          query = query.eq('status', statusFilter);
+        }
       }
 
       if (appliedFilters.dealership) {
@@ -387,6 +398,66 @@ export default function AccountsReceivable() {
     void queryClient.invalidateQueries({ queryKey: ['dealer-receivables'] });
     void queryClient.invalidateQueries({ queryKey: ['dealer-receivable-changes'] });
   };
+
+  const editReceivableMutation = useMutation({
+    mutationFn: async ({ receivableId, updates }: { receivableId: string, updates: Partial<DealerReceivable> }) => {
+      const { error } = await supabase
+        .from('dealer_receivables')
+        .update(updates)
+        .eq('id', receivableId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['dealer-receivables'] });
+      showToast('Receivable updated successfully!', 'success');
+    },
+    onError: (error: any) => {
+      showToast(`Failed to update receivable: ${error.message}`, 'error');
+    },
+  });
+
+  const deleteReceivableMutation = useMutation({
+    mutationFn: async ({ receivableId, reason, currentStatus }: { receivableId: string, reason: string, currentStatus: string }) => {
+      const { error } = await supabase
+        .from('dealer_receivables')
+        .update({
+          is_deleted: true,
+          deleted_reason: reason,
+          previous_status: currentStatus,
+        })
+        .eq('id', receivableId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['dealer-receivables'] });
+      showToast('Receivable deleted successfully!', 'success');
+    },
+    onError: (error: any) => {
+      showToast(`Failed to delete receivable: ${error.message}`, 'error');
+    },
+  });
+
+  const restoreReceivableMutation = useMutation({
+    mutationFn: async (receivable: DealerReceivable) => {
+      const { error } = await supabase
+        .from('dealer_receivables')
+        .update({
+          is_deleted: false,
+          deleted_reason: null,
+          status: receivable.previous_status || 'pending',
+          previous_status: null,
+        })
+        .eq('id', receivable.id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['dealer-receivables'] });
+      showToast('Receivable restored successfully!', 'success');
+    },
+    onError: (error: any) => {
+      showToast(`Failed to restore receivable: ${error.message}`, 'error');
+    },
+  });
 
   const autoMatchReceivables = async () => {
     showToast('Running auto-match...', 'info');
@@ -848,6 +919,13 @@ export default function AccountsReceivable() {
         >
           Received
         </Button>
+        <Button
+          variant={statusFilter === 'deleted' ? 'default' : 'outline'}
+          onClick={() => setStatusFilter('deleted')}
+          size="sm"
+        >
+          Deleted
+        </Button>
       </div>
 
       {selectedIds.size > 0 && (
@@ -881,9 +959,9 @@ export default function AccountsReceivable() {
           <span>Car</span>
           <span>Method</span>
           <span>Dealership</span>
-          <span>Amount</span>
+          <span className="text-right">Amount</span>
           <span>Status</span>
-          <span>Actions</span>
+          <span className="text-right">Actions</span>
         </div>
         {isLoading && (
           <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
@@ -932,9 +1010,9 @@ export default function AccountsReceivable() {
                   <Copy className="h-3 w-3" />
                 </Button>
               </div>
-              <div>
-                <div className="font-medium text-xs truncate">{receivable.client || '—'}</div>
-                <div className="text-xs text-muted-foreground truncate">{receivable.depositor || '—'}</div>
+              <div className="min-w-0">
+                <div className="font-medium text-xs truncate" title={receivable.client || ''}>{receivable.client || '—'}</div>
+                <div className="text-xs text-muted-foreground truncate" title={receivable.depositor || ''}>{receivable.depositor || '—'}</div>
               </div>
               <div className="text-xs truncate">{receivable.car || '—'}</div>
               <div className="text-xs truncate">{receivable.method || '—'}</div>
@@ -971,13 +1049,16 @@ export default function AccountsReceivable() {
                     <Eye className="h-3.5 w-3.5" />
                   </Button>
                 )}
-                {receivable.status === 'pending' ? (
+                {!receivable.is_deleted && receivable.status === 'pending' ? (
                   <>
                     <Button
                       size="icon"
                       variant="ghost"
                       className="h-8 w-8"
-                      onClick={() => {/* TODO: Open edit modal */ }}
+                      onClick={() => {
+                        setReceivableToEdit(receivable);
+                        setEditModalOpen(true);
+                      }}
                       title="Edit receivable"
                     >
                       <Pencil className="h-3.5 w-3.5" />
@@ -986,7 +1067,11 @@ export default function AccountsReceivable() {
                       size="icon"
                       variant="ghost"
                       className="h-8 w-8"
-                      onClick={() => {/* TODO: Open delete modal */ }}
+                      onClick={() => {
+                        setReceivableToDelete(receivable);
+                        setDeleteModalMode('delete');
+                        setDeleteModalOpen(true);
+                      }}
                       title="Delete receivable"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
@@ -1001,7 +1086,21 @@ export default function AccountsReceivable() {
                       <CheckCircle2 className="h-3.5 w-3.5" />
                     </Button>
                   </>
-                ) : receivable.status === 'received' ? (
+                ) : receivable.is_deleted ? (
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-8 w-8"
+                    onClick={() => {
+                      setReceivableToDelete(receivable);
+                      setDeleteModalMode('view');
+                      setDeleteModalOpen(true);
+                    }}
+                    title="View deletion reason and restore"
+                  >
+                    <Eye className="h-3.5 w-3.5" />
+                  </Button>
+                ) : !receivable.is_deleted && receivable.status === 'received' ? (
                   <div className="h-8 w-8 flex items-center justify-center" title="Received">
                     <CheckCircle2 className="h-4 w-4 text-green-600" />
                   </div>
@@ -1107,6 +1206,44 @@ export default function AccountsReceivable() {
           }}
         />
       )}
+
+      <EditReceivableModal
+        isOpen={editModalOpen}
+        onClose={() => {
+          setEditModalOpen(false);
+          setReceivableToEdit(null);
+        }}
+        onConfirm={(updates) => {
+          if (receivableToEdit) {
+            editReceivableMutation.mutate({ receivableId: receivableToEdit.id, updates });
+          }
+        }}
+        receivable={receivableToEdit}
+      />
+
+      <DeleteReceivableModal
+        isOpen={deleteModalOpen}
+        onClose={() => {
+          setDeleteModalOpen(false);
+          setReceivableToDelete(null);
+        }}
+        onConfirm={(reason) => {
+          if (receivableToDelete) {
+            deleteReceivableMutation.mutate({
+              receivableId: receivableToDelete.id,
+              reason,
+              currentStatus: receivableToDelete.status,
+            });
+          }
+        }}
+        mode={deleteModalMode}
+        existingReason={receivableToDelete?.deleted_reason || undefined}
+        onRestore={
+          deleteModalMode === 'view' && receivableToDelete
+            ? () => restoreReceivableMutation.mutate(receivableToDelete)
+            : undefined
+        }
+      />
     </div>
   );
 }

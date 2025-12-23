@@ -16,6 +16,7 @@ export interface Database {
           changed_at: string
           field_diffs: Json
           import_id: string | null
+          note: string | null
           created_at: string
         }
         Insert: {
@@ -24,6 +25,7 @@ export interface Database {
           changed_at?: string
           field_diffs?: Json
           import_id?: string | null
+          note?: string | null
           created_at?: string
         }
         Update: {
@@ -32,6 +34,7 @@ export interface Database {
           changed_at?: string
           field_diffs?: Json
           import_id?: string | null
+          note?: string | null
           created_at?: string
         }
       }
@@ -80,6 +83,9 @@ export interface Database {
           source_sheet_tab: string | null
           duplicate_check_hash: string | null
           row_fingerprint: string | null
+          is_deleted: boolean
+          deleted_reason: string | null
+          previous_status: string | null
           created_at: string
           updated_at: string
         }
@@ -101,6 +107,9 @@ export interface Database {
           source_sheet_tab?: string | null
           duplicate_check_hash?: string | null
           row_fingerprint?: string | null
+          is_deleted?: boolean
+          deleted_reason?: string | null
+          previous_status?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -122,6 +131,9 @@ export interface Database {
           source_sheet_tab?: string | null
           duplicate_check_hash?: string | null
           row_fingerprint?: string | null
+          is_deleted?: boolean
+          deleted_reason?: string | null
+          previous_status?: string | null
           created_at?: string
           updated_at?: string
         }
