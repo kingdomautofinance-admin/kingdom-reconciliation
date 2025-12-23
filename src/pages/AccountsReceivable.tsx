@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery, useMutation } from '@tanstack/react-query';
 import { useLocation } from 'wouter';
-import { AlertCircle, Link2, Loader2, Search, SlidersHorizontal, X, Calendar, Download, Copy, ChevronDown } from 'lucide-react';
+import { AlertCircle, Link2, Loader2, Search, SlidersHorizontal, X, Calendar, Download, Copy, ChevronDown, Eye, CheckCircle2, Pencil, Trash2 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { queryClient } from '@/lib/queryClient';
 import type {
@@ -16,6 +16,9 @@ import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { useToast } from '@/components/ui/toast';
 import { formatCurrency, formatISODateToUS, parseUSDateToISO } from '@/lib/utils';
+import { DeleteReceivableModal } from '@/components/DeleteReceivableModal';
+import { EditReceivableModal } from '@/components/EditReceivableModal';
+import { ViewReceivableDetailsModal } from '@/components/ViewReceivableDetailsModal';
 
 const RECEIVABLES_PER_PAGE = 50;
 const DATE_TOLERANCE_DAYS = 2;
@@ -883,10 +886,10 @@ export default function AccountsReceivable() {
       )}
 
       <Card className="overflow-hidden">
-        <div className="grid grid-cols-[32px_120px_140px_1fr_140px_120px_160px_120px_120px_120px_120px_40px] gap-3 border-b px-4 py-3 text-xs font-semibold text-muted-foreground">
+        <div className="grid grid-cols-[32px_100px_100px_1fr_120px_100px_120px_110px_100px_100px_100px_120px] gap-4 border-b px-4 py-3 text-xs font-semibold text-muted-foreground">
           <span />
           <span>Date</span>
-          <span>LoanId</span>
+          <span>Loan ID</span>
           <span>Client / Depositor</span>
           <span>Car</span>
           <span>Method</span>
@@ -895,7 +898,7 @@ export default function AccountsReceivable() {
           <span>Matched</span>
           <span>Outstanding</span>
           <span>Status</span>
-          <span />
+          <span>Actions</span>
         </div>
         {isLoading && (
           <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
@@ -930,7 +933,7 @@ export default function AccountsReceivable() {
           return (
             <div
               key={receivable.id}
-              className="grid grid-cols-[32px_120px_140px_1fr_140px_120px_160px_120px_120px_120px_120px_40px] gap-3 border-b px-4 py-3 text-sm"
+              className="grid grid-cols-[32px_100px_100px_1fr_120px_100px_120px_110px_100px_100px_100px_120px] gap-4 border-b px-4 py-3 text-sm items-center"
             >
               <div className="flex items-center">
                 <input
@@ -940,9 +943,9 @@ export default function AccountsReceivable() {
                   aria-label={`Select receivable ${receivable.loan_id}`}
                 />
               </div>
-              <div>{formatISODateToUS(receivable.date.slice(0, 10))}</div>
+              <div className="text-xs">{formatISODateToUS(receivable.date.slice(0, 10))}</div>
               <div className="flex items-center gap-1 group">
-                <span className="font-medium truncate" title={receivable.loan_id}>
+                <span className="font-medium truncate text-xs" title={receivable.loan_id}>
                   {receivable.loan_id && receivable.loan_id.length > 6
                     ? `${receivable.loan_id.substring(0, 3)}...`
                     : receivable.loan_id}
@@ -958,46 +961,76 @@ export default function AccountsReceivable() {
                 </Button>
               </div>
               <div>
-                <div className="font-medium">{receivable.client || '—'}</div>
-                <div className="text-xs text-muted-foreground">{receivable.depositor || '—'}</div>
+                <div className="font-medium text-xs truncate">{receivable.client || '—'}</div>
+                <div className="text-xs text-muted-foreground truncate">{receivable.depositor || '—'}</div>
               </div>
-              <div>{receivable.car || '—'}</div>
-              <div>{receivable.method || '—'}</div>
-              <div>{receivable.dealership || '—'}</div>
-              <div className="font-medium">{formatCurrency(toNumber(receivable.amount))}</div>
-              <div>{formatCurrency(matched)}</div>
-              <div>{formatCurrency(outstanding)}</div>
-              <div className="flex items-center gap-2">
+              <div className="text-xs truncate">{receivable.car || '—'}</div>
+              <div className="text-xs truncate">{receivable.method || '—'}</div>
+              <div className="text-xs truncate">{receivable.dealership || '—'}</div>
+              <div className="font-medium text-xs text-right">{formatCurrency(toNumber(receivable.amount))}</div>
+              <div className="text-xs text-right">{formatCurrency(matched)}</div>
+              <div className="text-xs text-right">{formatCurrency(outstanding)}</div>
+              <div className="flex items-center">
                 {renderStatusBadge(receivable.status)}
-              </div>
-              <div className="flex items-center justify-end gap-2">
                 {alertTextParts.length > 0 && (
-                  <span title={alertTextParts.join('\n')}>
+                  <span title={alertTextParts.join('\n')} className="ml-1">
                     <AlertCircle className="h-4 w-4 text-orange-500" />
                   </span>
                 )}
-                {receivable.status === 'pending' ? (
-                  <button
-                    className="text-xs text-green-600 hover:underline"
-                    onClick={() => openOverrideModal(receivable, 'mark')}
+              </div>
+              <div className="flex items-center justify-end gap-1">
+                {selectedIds.size === 0 && receivable.status === 'pending' && (
+                  <Button
+                    size="icon"
+                    variant="outline"
+                    className="h-8 w-8"
+                    onClick={() => toggleSelection(receivable.id)}
+                    title="Select for matching"
                   >
-                    Mark received
-                  </button>
-                ) : (
-                  <button
-                    className="text-xs text-blue-600 hover:underline"
-                    onClick={() => openOverrideModal(receivable, 'undo')}
-                  >
-                    Undo
-                  </button>
+                    <Link2 className="h-3.5 w-3.5" />
+                  </Button>
                 )}
                 {matched > 0 && (
-                  <button
-                    className="text-xs text-slate-600 hover:underline"
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-8 w-8"
                     onClick={() => setAllocationsTarget(receivable)}
+                    title="View allocations"
                   >
-                    Allocations
-                  </button>
+                    <Eye className="h-3.5 w-3.5" />
+                  </Button>
+                )}
+                {receivable.status === 'pending' && (
+                  <>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-8 w-8"
+                      onClick={() => {/* TODO: Open edit modal */}}
+                      title="Edit receivable"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-8 w-8"
+                      onClick={() => {/* TODO: Open delete modal */}}
+                      title="Delete receivable"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-8 w-8 text-green-600 hover:text-green-700"
+                      onClick={() => openOverrideModal(receivable, 'mark')}
+                      title="Mark as received"
+                    >
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </>
                 )}
               </div>
             </div>

@@ -26,7 +26,7 @@ export default function Settings() {
         </p>
       </div>
 
-      <Accordion type="multiple" defaultValue={['appearance', 'imports', 'integrations']} className="space-y-4">
+      <Accordion type="multiple" defaultValue={[]} className="space-y-4">
         {/* Appearance Section */}
         <AccordionItem value="appearance" className="border rounded-lg bg-card">
           <AccordionTrigger className="px-6 hover:no-underline">
@@ -57,26 +57,75 @@ export default function Settings() {
           </AccordionContent>
         </AccordionItem>
 
-        {/* Data Imports Section */}
-        <AccordionItem value="imports" className="border rounded-lg bg-card">
+        {/* Dealer Receivables Upload */}
+        <AccordionItem value="dealer-receivables" className="border rounded-lg bg-card">
           <AccordionTrigger className="px-6 hover:no-underline">
             <div className="flex items-center gap-3">
               <Upload className="h-5 w-5" />
               <div className="text-left">
-                <h2 className="text-base font-semibold">Data Imports</h2>
+                <h2 className="text-base font-semibold">Dealer Receivables</h2>
                 <p className="text-sm text-muted-foreground font-normal">
-                  Upload transaction data from various sources
+                  Import dealership-collected payment records
                 </p>
               </div>
             </div>
           </AccordionTrigger>
           <AccordionContent className="px-6">
-            <div className="space-y-6">
-              <DealerReceivablesUpload />
-              <BankUpload />
-              <CardUpload />
-              <KingdomUpload />
+            <DealerReceivablesUpload />
+          </AccordionContent>
+        </AccordionItem>
+
+        {/* Bank Upload */}
+        <AccordionItem value="bank-upload" className="border rounded-lg bg-card">
+          <AccordionTrigger className="px-6 hover:no-underline">
+            <div className="flex items-center gap-3">
+              <Upload className="h-5 w-5" />
+              <div className="text-left">
+                <h2 className="text-base font-semibold">Bank Statement Upload</h2>
+                <p className="text-sm text-muted-foreground font-normal">
+                  Upload Wells Fargo and Delta Credit Union statements
+                </p>
+              </div>
             </div>
+          </AccordionTrigger>
+          <AccordionContent className="px-6">
+            <BankUpload />
+          </AccordionContent>
+        </AccordionItem>
+
+        {/* Card Upload */}
+        <AccordionItem value="card-upload" className="border rounded-lg bg-card">
+          <AccordionTrigger className="px-6 hover:no-underline">
+            <div className="flex items-center gap-3">
+              <Upload className="h-5 w-5" />
+              <div className="text-left">
+                <h2 className="text-base font-semibold">Card Transactions Upload</h2>
+                <p className="text-sm text-muted-foreground font-normal">
+                  Upload Stripe credit card transaction data
+                </p>
+              </div>
+            </div>
+          </AccordionTrigger>
+          <AccordionContent className="px-6">
+            <CardUpload />
+          </AccordionContent>
+        </AccordionItem>
+
+        {/* Kingdom Upload */}
+        <AccordionItem value="kingdom-upload" className="border rounded-lg bg-card">
+          <AccordionTrigger className="px-6 hover:no-underline">
+            <div className="flex items-center gap-3">
+              <Upload className="h-5 w-5" />
+              <div className="text-left">
+                <h2 className="text-base font-semibold">Sistema Kingdom</h2>
+                <p className="text-sm text-muted-foreground font-normal">
+                  Import transactions from Kingdom system
+                </p>
+              </div>
+            </div>
+          </AccordionTrigger>
+          <AccordionContent className="px-6">
+            <KingdomUpload />
           </AccordionContent>
         </AccordionItem>
 
@@ -86,9 +135,9 @@ export default function Settings() {
             <div className="flex items-center gap-3">
               <LinkIcon className="h-5 w-5" />
               <div className="text-left">
-                <h2 className="text-base font-semibold">Integrations</h2>
+                <h2 className="text-base font-semibold">Google Sheets Integration</h2>
                 <p className="text-sm text-muted-foreground font-normal">
-                  Connect external services and data sources
+                  Connect your ledger spreadsheet for automatic synchronization
                 </p>
               </div>
             </div>
@@ -98,10 +147,10 @@ export default function Settings() {
               <CardHeader className="px-0 pt-0">
                 <CardTitle className="flex items-center gap-2 text-sm">
                   <FileSpreadsheet className="h-4 w-4" />
-                  Google Sheets Connection
+                  Service Account Connection
                 </CardTitle>
                 <CardDescription>
-                  Connect your ledger spreadsheet for automatic synchronization.
+                  Configure Google Sheets API access for ledger synchronization.
                 </CardDescription>
               </CardHeader>
               <CardContent className="px-0 pb-0">
