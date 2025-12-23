@@ -4,6 +4,7 @@ import { GoogleSheetsConnectionServiceAccount } from '@/components/GoogleSheetsC
 import { BankUpload } from '@/components/BankUpload';
 import { CardUpload } from '@/components/CardUpload';
 import { KingdomUpload } from '@/components/KingdomUpload';
+import { DealerReceivablesUpload } from '@/components/DealerReceivablesUpload';
 
 export default function Upload() {
 
@@ -22,6 +23,8 @@ export default function Upload() {
         <CardUpload />
 
         <KingdomUpload />
+
+        <DealerReceivablesUpload />
 
         <Card>
           <CardHeader>

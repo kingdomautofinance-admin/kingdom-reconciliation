@@ -345,17 +345,17 @@ export default function AccountsReceivable() {
     const payload =
       overrideMode === 'mark'
         ? {
-            status: 'received',
-            received_at: now,
-            manual_override_note: overrideNote.trim(),
-            manual_override_at: now,
-          }
+          status: 'received',
+          received_at: now,
+          manual_override_note: overrideNote.trim(),
+          manual_override_at: now,
+        }
         : {
-            status: 'pending',
-            received_at: null,
-            manual_override_note: overrideNote.trim(),
-            manual_override_at: now,
-          };
+          status: 'pending',
+          received_at: null,
+          manual_override_note: overrideNote.trim(),
+          manual_override_at: now,
+        };
 
     const { error } = await supabase
       .from('dealer_receivables')
@@ -874,8 +874,7 @@ export default function AccountsReceivable() {
       )}
 
       <Card className="overflow-hidden">
-        <div className="grid grid-cols-[32px_75px_40px_1fr_100px_70px_100px_90px_80px_100px] gap-3 border-b px-4 py-3 text-xs font-semibold text-muted-foreground">
-          <span />
+        <div className="grid grid-cols-[75px_40px_1fr_100px_70px_100px_90px_90px_140px] gap-3 border-b px-4 py-3 text-xs font-semibold text-muted-foreground">
           <span>Date</span>
           <span />
           <span>Client / Depositor</span>
@@ -919,16 +918,8 @@ export default function AccountsReceivable() {
           return (
             <div
               key={receivable.id}
-              className="grid grid-cols-[32px_75px_40px_1fr_100px_70px_100px_90px_80px_100px] gap-3 border-b px-4 py-3 text-sm items-center"
+              className="grid grid-cols-[75px_40px_1fr_100px_70px_100px_90px_90px_140px] gap-3 border-b px-4 py-3 text-sm items-center"
             >
-              <div className="flex items-center">
-                <input
-                  type="checkbox"
-                  checked={isSelected}
-                  onChange={() => toggleSelection(receivable.id)}
-                  aria-label={`Select receivable ${receivable.loan_id}`}
-                />
-              </div>
               <div className="text-xs">{formatISODateToUS(receivable.date.slice(0, 10))}</div>
               <div className="flex items-center justify-center">
                 <Button
@@ -958,13 +949,13 @@ export default function AccountsReceivable() {
                 )}
               </div>
               <div className="flex items-center justify-end gap-1">
-                {selectedIds.size === 0 && receivable.status === 'pending' && (
+                {receivable.status === 'pending' && (
                   <Button
                     size="icon"
-                    variant="outline"
+                    variant={isSelected ? 'default' : 'outline'}
                     className="h-8 w-8"
                     onClick={() => toggleSelection(receivable.id)}
-                    title="Select for matching"
+                    title={isSelected ? 'Unselect' : 'Select for matching'}
                   >
                     <Link2 className="h-3.5 w-3.5" />
                   </Button>
@@ -986,7 +977,7 @@ export default function AccountsReceivable() {
                       size="icon"
                       variant="ghost"
                       className="h-8 w-8"
-                      onClick={() => {/* TODO: Open edit modal */}}
+                      onClick={() => {/* TODO: Open edit modal */ }}
                       title="Edit receivable"
                     >
                       <Pencil className="h-3.5 w-3.5" />
@@ -995,7 +986,7 @@ export default function AccountsReceivable() {
                       size="icon"
                       variant="ghost"
                       className="h-8 w-8"
-                      onClick={() => {/* TODO: Open delete modal */}}
+                      onClick={() => {/* TODO: Open delete modal */ }}
                       title="Delete receivable"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
@@ -1369,9 +1360,8 @@ function MatchModal({ onClose, selectedReceivables, matchedTotals, onMatched }: 
                 return (
                   <button
                     key={transaction.id}
-                    className={`w-full text-left border rounded-md p-2 text-sm ${
-                      isSelected ? 'border-blue-500 bg-blue-50' : 'border-transparent hover:border-muted'
-                    }`}
+                    className={`w-full text-left border rounded-md p-2 text-sm ${isSelected ? 'border-blue-500 bg-blue-50' : 'border-transparent hover:border-muted'
+                      }`}
                     onClick={() => setSelectedTransaction(transaction)}
                   >
                     <div className="flex items-center justify-between">
