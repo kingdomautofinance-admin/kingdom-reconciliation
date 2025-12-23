@@ -45,6 +45,7 @@ export default function Transactions() {
     return {
       dateFrom: params.get('dateFrom') || '',
       dateTo: params.get('dateTo') || '',
+      search: params.get('q') || '',
     };
   }, [location]);
 
@@ -101,6 +102,13 @@ export default function Transactions() {
       setAppliedIsoDateTo(normalizeDateInput(urlParams.dateTo));
     }
   }, [urlParams.dateFrom, urlParams.dateTo]);
+
+  useEffect(() => {
+    if (urlParams.search) {
+      setSearchTerm(urlParams.search);
+      setAppliedSearchTerm(urlParams.search.trim());
+    }
+  }, [urlParams.search]);
 
   const handleApplyFilters = () => {
     setAppliedSearchTerm(normalizedSearchInput);
@@ -499,7 +507,7 @@ export default function Transactions() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Transactions</h1>
           <p className="text-muted-foreground">
-            View and confirm all payments have been included in the spreadsheet
+            View and confirm all payments have been included in the spreadsheet.
           </p>
         </div>
         <Button

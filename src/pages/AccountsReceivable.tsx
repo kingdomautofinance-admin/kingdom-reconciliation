@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { useLocation } from 'wouter';
-import { AlertCircle, Link2, Loader2, Search, SlidersHorizontal, Undo2 } from 'lucide-react';
+import { AlertCircle, Link2, Loader2, Search, SlidersHorizontal, X, Calendar, Download, Copy } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { queryClient } from '@/lib/queryClient';
 import type {
@@ -71,6 +71,7 @@ export default function AccountsReceivable() {
   const [location] = useLocation();
   const urlParams = useMemo(() => new URLSearchParams(location.split('?')[1] || ''), [location]);
   const initialDealership = urlParams.get('dealership') || '';
+  const initialSearch = urlParams.get('q') || '';
 
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'received'>('all');
   const [searchTerm, setSearchTerm] = useState('');
@@ -83,6 +84,17 @@ export default function AccountsReceivable() {
     dateFrom: '',
     dateTo: '',
   });
+
+  useEffect(() => {
+    if (initialSearch) {
+      setSearchTerm(initialSearch);
+      setAppliedFilters((prev) => ({
+        ...prev,
+        search: initialSearch.trim(),
+      }));
+      void queryClient.invalidateQueries({ queryKey: ['dealer-receivables'] });
+    }
+  }, [initialSearch]);
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [overrideTarget, setOverrideTarget] = useState<DealerReceivable | null>(null);
@@ -664,87 +676,139 @@ export default function AccountsReceivable() {
 
   const renderStatusBadge = (status: string) => {
     if (status === 'received') {
-      return <Badge className="bg-green-100 text-green-800">Received</Badge>;
+      return <Badge className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">Received</Badge>;
     }
-    return <Badge className="bg-blue-100 text-blue-800">Pending</Badge>;
+    return <Badge className="bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">Pending</Badge>;
+  };
+
+  const copyToClipboard = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast('Loan ID copied to clipboard', 'success');
+    } catch (err) {
+      showToast('Failed to copy to clipboard', 'error');
+    }
   };
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Accounts Receivable</h1>
-        <p className="text-muted-foreground">
-          Track dealership-collected payments and confirm transfers.
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Accounts Receivables</h1>
+          <p className="text-muted-foreground">
+            Track dealership-collected payments and confirm transfers.
+          </p>
+        </div>
+        <Button onClick={exportCsv} disabled={receivables.length === 0}>
+          <Download className="h-4 w-4" />
+          Export CSV
+        </Button>
       </div>
 
-      <Card className="p-4 space-y-4">
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex items-center gap-2">
+      <div className="flex flex-wrap gap-4">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Search by loan, client, dealership..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                applyFilters();
+              }
+            }}
+            className="pl-9"
+          />
+        </div>
+
+        <div className="flex gap-2">
+          <Input
+            value={dealershipFilter}
+            onChange={(e) => setDealershipFilter(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                applyFilters();
+              }
+            }}
+            placeholder="Dealership"
+            className="w-40"
+          />
+          <div className="relative">
+            <Calendar className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Search by loan, client, dealership..."
-              className="w-64"
-            />
-            <Button variant="outline" size="icon" onClick={applyFilters}>
-              <Search className="h-4 w-4" />
-            </Button>
-            <Button variant="ghost" size="sm" onClick={clearFilters}>
-              Clear
-            </Button>
-          </div>
-          <div className="flex items-center gap-2">
-            <Input
-              value={dealershipFilter}
-              onChange={(e) => setDealershipFilter(e.target.value)}
-              placeholder="Dealership"
-              className="w-48"
-            />
-            <Input
+              type="text"
+              placeholder="MM/DD/YYYY"
               value={dateFrom}
               onChange={(e) => setDateFrom(e.target.value)}
-              placeholder="MM/DD/YYYY"
-              className="w-36"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  applyFilters();
+                }
+              }}
+              className="pl-9 w-40"
+              maxLength={10}
             />
+          </div>
+          <div className="relative">
+            <Calendar className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
+              type="text"
+              placeholder="MM/DD/YYYY"
               value={dateTo}
               onChange={(e) => setDateTo(e.target.value)}
-              placeholder="MM/DD/YYYY"
-              className="w-36"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  applyFilters();
+                }
+              }}
+              className="pl-9 w-40"
+              maxLength={10}
             />
-            <Button variant="outline" size="sm" onClick={applyFilters}>
-              Apply
-            </Button>
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            variant={statusFilter === 'all' ? 'default' : 'outline'}
-            onClick={() => setStatusFilter('all')}
-          >
-            All
+        <div className="flex gap-2 items-end">
+          <Button onClick={applyFilters} size="sm">
+            Apply Filters
           </Button>
-          <Button
-            variant={statusFilter === 'pending' ? 'default' : 'outline'}
-            onClick={() => setStatusFilter('pending')}
-          >
-            Pending
-          </Button>
-          <Button
-            variant={statusFilter === 'received' ? 'default' : 'outline'}
-            onClick={() => setStatusFilter('received')}
-          >
-            Received
+          <Button variant="outline" onClick={clearFilters} size="sm">
+            Clear
           </Button>
         </div>
-      </Card>
+      </div>
+
+      <div className="flex gap-2">
+        <Button
+          variant={statusFilter === 'all' ? 'default' : 'outline'}
+          onClick={() => setStatusFilter('all')}
+          size="sm"
+        >
+          All
+        </Button>
+        <Button
+          variant={statusFilter === 'pending' ? 'default' : 'outline'}
+          onClick={() => setStatusFilter('pending')}
+          size="sm"
+        >
+          Pending
+        </Button>
+        <Button
+          variant={statusFilter === 'received' ? 'default' : 'outline'}
+          onClick={() => setStatusFilter('received')}
+          size="sm"
+        >
+          Received
+        </Button>
+      </div>
 
       <Card className="p-4 space-y-3">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-sm font-semibold">Outstanding by dealership</h2>
+            <h2 className="text-sm font-semibold">Outstanding by Dealership</h2>
             <p className="text-xs text-muted-foreground">
               Total outstanding: {formatCurrency(outstandingSummary?.total || 0)}
             </p>
@@ -753,48 +817,47 @@ export default function AccountsReceivable() {
         {outstandingSummary?.byDealership.length === 0 && (
           <div className="text-sm text-muted-foreground">No outstanding balances.</div>
         )}
-        <div className="grid gap-2 md:grid-cols-2">
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
           {outstandingSummary?.byDealership.map(entry => (
-            <button
+            <Button
               key={entry.dealership}
-              className="flex items-center justify-between rounded-md border px-3 py-2 text-sm hover:bg-accent/40"
+              variant="outline"
+              className="flex items-center justify-between h-auto py-3"
               onClick={() => {
                 setDealershipFilter(entry.dealership);
                 setAppliedFilters(prev => ({
                   ...prev,
                   dealership: entry.dealership,
                 }));
+                void queryClient.invalidateQueries({ queryKey: ['dealer-receivables'] });
               }}
             >
-              <span>{entry.dealership}</span>
-              <span className="font-medium">{formatCurrency(entry.amount)}</span>
-            </button>
+              <span className="font-normal">{entry.dealership}</span>
+              <span className="font-semibold ml-3">{formatCurrency(entry.amount)}</span>
+            </Button>
           ))}
         </div>
       </Card>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={autoMatchReceivables} disabled={receivables.length === 0}>
-            <Link2 className="mr-2 h-4 w-4" />
+          <Button onClick={autoMatchReceivables} disabled={receivables.length === 0} size="sm">
+            <Link2 className="h-4 w-4" />
             Auto-match
           </Button>
           <Button
-            variant="outline"
             onClick={() => setMatchModalOpen(true)}
             disabled={selectedIds.size === 0}
+            size="sm"
           >
-            <SlidersHorizontal className="mr-2 h-4 w-4" />
+            <SlidersHorizontal className="h-4 w-4" />
             Match selected ({selectedIds.size})
           </Button>
-          <Button variant="ghost" onClick={clearSelection} disabled={selectedIds.size === 0}>
+          <Button variant="ghost" onClick={clearSelection} disabled={selectedIds.size === 0} size="sm">
             Clear selection
           </Button>
-          <Button variant="outline" onClick={exportCsv}>
-            Export CSV
-          </Button>
         </div>
-        <Button variant="ghost" size="sm" onClick={selectAllOnPage}>
+        <Button variant="outline" size="sm" onClick={selectAllOnPage}>
           Select page
         </Button>
       </div>
@@ -858,7 +921,22 @@ export default function AccountsReceivable() {
                 />
               </div>
               <div>{formatISODateToUS(receivable.date.slice(0, 10))}</div>
-              <div className="font-medium">{receivable.loan_id}</div>
+              <div className="flex items-center gap-1 group">
+                <span className="font-medium truncate" title={receivable.loan_id}>
+                  {receivable.loan_id && receivable.loan_id.length > 6
+                    ? `${receivable.loan_id.substring(0, 3)}...`
+                    : receivable.loan_id}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
+                  onClick={() => copyToClipboard(receivable.loan_id)}
+                  title="Copy Loan ID"
+                >
+                  <Copy className="h-3 w-3" />
+                </Button>
+              </div>
               <div>
                 <div className="font-medium">{receivable.client || '—'}</div>
                 <div className="text-xs text-muted-foreground">{receivable.depositor || '—'}</div>
@@ -927,7 +1005,7 @@ export default function AccountsReceivable() {
                 {overrideMode === 'mark' ? 'Manual Receive Override' : 'Undo Manual Override'}
               </h2>
               <Button variant="ghost" size="icon" onClick={closeOverrideModal}>
-                <Undo2 className="h-4 w-4" />
+                <X className="h-4 w-4" />
               </Button>
             </div>
 
@@ -1031,7 +1109,7 @@ function AllocationsModal({ receivable, onClose, onRemoveAllocation }: Allocatio
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold">Allocations for {receivable.loan_id}</h2>
           <Button variant="ghost" size="icon" onClick={onClose}>
-            <Undo2 className="h-4 w-4" />
+            <X className="h-4 w-4" />
           </Button>
         </div>
         {isLoading && <div className="text-sm text-muted-foreground">Loading allocations...</div>}
@@ -1228,7 +1306,7 @@ function MatchModal({ onClose, selectedReceivables, matchedTotals, onMatched }: 
             </p>
           </div>
           <Button variant="ghost" size="icon" onClick={onClose}>
-            <Undo2 className="h-4 w-4" />
+            <X className="h-4 w-4" />
           </Button>
         </div>
 

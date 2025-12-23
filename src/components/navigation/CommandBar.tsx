@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { useLocation } from 'wouter';
-import { Search, Upload, FileDown } from 'lucide-react';
+import { Search, Upload, FileDown, List, Landmark } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
 import { navItems } from '@/lib/navigationItems';
+import { supabase } from '@/lib/supabase';
+import { formatCurrency, formatDate } from '@/lib/utils';
 
 type CommandItem = {
   id: string;
@@ -13,6 +15,17 @@ type CommandItem = {
   icon: LucideIcon;
   path?: string;
   keywords?: string[];
+  description?: string;
+  type?: 'page' | 'action';
+};
+
+type DataResult = {
+  id: string;
+  label: string;
+  icon: LucideIcon;
+  path: string;
+  description: string;
+  type: 'data';
 };
 
 type CommandBarProps = {
@@ -20,6 +33,17 @@ type CommandBarProps = {
   onClose: () => void;
   query: string;
   onQueryChange: (value: string) => void;
+};
+
+const escapeForIlike = (term: string) =>
+  term.replace(/([*\\])/g, '\\$1').replace(/,/g, '\\,').replace(/_/g, '\\_').replace(/%/g, '\\%');
+
+const buildAmountCondition = (rawTerm: string, column: string) => {
+  const digitsOnly = rawTerm.replace(/[^\d.-]/g, '');
+  if (!digitsOnly) return null;
+  const numericValue = Number(digitsOnly);
+  if (Number.isNaN(numericValue)) return null;
+  return `${column}.eq.${encodeURIComponent(numericValue.toString())}`;
 };
 
 export default function CommandBar({
@@ -31,6 +55,9 @@ export default function CommandBar({
   const [, setLocation] = useLocation();
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);
+  const [dataResults, setDataResults] = useState<DataResult[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
 
   const items = useMemo<CommandItem[]>(
     () => {
@@ -54,32 +81,35 @@ export default function CommandBar({
           icon: item.icon,
           path: item.path,
           keywords,
+          type: 'page',
         };
       });
 
       return [
         ...navCommands,
-        { id: 'upload', label: 'Upload', icon: Upload, path: '/upload', keywords: ['import'] },
+        { id: 'upload', label: 'Upload', icon: Upload, path: '/upload', keywords: ['import'], type: 'action' },
         {
           id: 'upload-csv',
           label: 'Upload CSV',
           icon: Upload,
           path: '/upload',
-          keywords: ['import', 'csv', 'bank', 'credit card']
+          keywords: ['import', 'csv', 'bank', 'credit card'],
+          type: 'action',
         },
         {
           id: 'export-report',
           label: 'Export report',
           icon: FileDown,
           path: '/reports',
-          keywords: ['download', 'csv', 'pdf']
+          keywords: ['download', 'csv', 'pdf'],
+          type: 'action',
         }
       ];
     },
     []
   );
 
-  const results = useMemo(() => {
+  const pageResults = useMemo(() => {
     const normalized = query.trim().toLowerCase();
     if (!normalized) return items;
     return items.filter((item) => {
@@ -92,6 +122,25 @@ export default function CommandBar({
     });
   }, [items, query]);
 
+  const combinedResults = useMemo(() => {
+    return [...pageResults, ...dataResults];
+  }, [pageResults, dataResults]);
+
+  const indexedResults = useMemo(
+    () => combinedResults.map((item, index) => ({ ...item, index })),
+    [combinedResults]
+  );
+
+  const indexedPages = useMemo(
+    () => indexedResults.filter((item) => item.type !== 'data'),
+    [indexedResults]
+  );
+
+  const indexedData = useMemo(
+    () => indexedResults.filter((item) => item.type === 'data'),
+    [indexedResults]
+  );
+
   useEffect(() => {
     if (!isOpen) return;
     setActiveIndex(0);
@@ -99,10 +148,130 @@ export default function CommandBar({
   }, [isOpen]);
 
   useEffect(() => {
-    if (activeIndex >= results.length) {
+    if (activeIndex >= combinedResults.length) {
       setActiveIndex(0);
     }
-  }, [activeIndex, results.length]);
+  }, [activeIndex, combinedResults.length]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const normalized = query.trim();
+    if (!normalized || normalized.length < 2) {
+      setDataResults([]);
+      setSearchError(null);
+      setIsSearching(false);
+      return;
+    }
+
+    let isActive = true;
+    const timeoutId = window.setTimeout(async () => {
+      setIsSearching(true);
+      setSearchError(null);
+      try {
+        const sanitized = escapeForIlike(normalized);
+        const searchPattern = `*${sanitized}*`;
+
+        const transactionConditions = [
+          `name.ilike.${searchPattern}`,
+          `depositor.ilike.${searchPattern}`,
+          `car.ilike.${searchPattern}`,
+          `historical_text.ilike.${searchPattern}`,
+          `source.ilike.${searchPattern}`,
+        ];
+
+        const transactionAmountCondition = buildAmountCondition(normalized, 'value');
+        if (transactionAmountCondition) {
+          transactionConditions.push(transactionAmountCondition);
+        }
+
+        const receivableConditions = [
+          `loan_id.ilike.${searchPattern}`,
+          `client.ilike.${searchPattern}`,
+          `depositor.ilike.${searchPattern}`,
+          `car.ilike.${searchPattern}`,
+          `dealership.ilike.${searchPattern}`,
+          `method.ilike.${searchPattern}`,
+          `amount.ilike.${searchPattern}`,
+        ];
+
+        const receivableAmountCondition = buildAmountCondition(normalized, 'amount');
+        if (receivableAmountCondition) {
+          receivableConditions.push(receivableAmountCondition);
+        }
+
+        const [transactionResponse, receivableResponse] = await Promise.all([
+          supabase
+            .from('transactions')
+            .select('id,date,name,depositor,car,value,source,status,is_deleted')
+            .eq('is_deleted', false)
+            .or(transactionConditions.join(','))
+            .order('date', { ascending: false })
+            .limit(6),
+          supabase
+            .from('dealer_receivables')
+            .select('id,loan_id,date,amount,car,client,depositor,dealership,status')
+            .or(receivableConditions.join(','))
+            .order('date', { ascending: false })
+            .limit(6),
+        ]);
+
+        if (!isActive) return;
+
+        if (transactionResponse.error || receivableResponse.error) {
+          setSearchError('Unable to fetch results right now.');
+          setDataResults([]);
+          return;
+        }
+
+        const transactionResults: DataResult[] = (transactionResponse.data ?? []).map((row) => {
+          const name = row.name ?? row.depositor ?? row.car ?? 'Transaction';
+          const label = `${formatCurrency(row.value)} • ${name}`;
+          const description = `${formatDate(row.date)} • ${row.source} • ${row.status}`;
+          const isKingdom = row.source?.toLowerCase().startsWith('kingdom system');
+          const path = `${isKingdom ? '/kingdom' : '/transactions'}?q=${encodeURIComponent(normalized)}`;
+          return {
+            id: `transaction-${row.id}`,
+            label,
+            description,
+            icon: List,
+            path,
+            type: 'data',
+          };
+        });
+
+        const receivableResults: DataResult[] = (receivableResponse.data ?? []).map((row) => {
+          const name = row.client ?? row.depositor ?? row.loan_id ?? 'Receivable';
+          const label = `${formatCurrency(row.amount)} • ${name}`;
+          const dealership = row.dealership ? row.dealership : 'Accounts receivable';
+          const description = `${formatDate(row.date)} • ${dealership} • ${row.status}`;
+          return {
+            id: `receivable-${row.id}`,
+            label,
+            description,
+            icon: Landmark,
+            path: `/accounts-receivable?q=${encodeURIComponent(normalized)}`,
+            type: 'data',
+          };
+        });
+
+        setDataResults([...transactionResults, ...receivableResults]);
+      } catch (_error) {
+        if (!isActive) return;
+        setSearchError('Unable to fetch results right now.');
+        setDataResults([]);
+      } finally {
+        if (isActive) {
+          setIsSearching(false);
+        }
+      }
+    }, 250);
+
+    return () => {
+      isActive = false;
+      window.clearTimeout(timeoutId);
+    };
+  }, [isOpen, query]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -119,7 +288,7 @@ export default function CommandBar({
 
   if (!isOpen) return null;
 
-  const handleSelect = (item: CommandItem) => {
+  const handleSelect = (item: CommandItem | DataResult) => {
     if (item.path) {
       setLocation(item.path);
     }
@@ -137,7 +306,7 @@ export default function CommandBar({
     }
     if (event.key === 'Enter') {
       event.preventDefault();
-      const item = results[activeIndex];
+      const item = combinedResults[activeIndex];
       if (item) handleSelect(item);
     }
   };
@@ -160,14 +329,27 @@ export default function CommandBar({
           />
         </div>
         <div className="max-h-72 overflow-y-auto">
-          {results.length === 0 && (
+          {searchError && (
+            <div className="px-4 py-3 text-sm text-destructive">{searchError}</div>
+          )}
+          {combinedResults.length === 0 && !isSearching && !searchError && (
             <div className="px-4 py-6 text-sm text-muted-foreground">
               No results. Try another keyword.
             </div>
           )}
-          {results.map((item, index) => {
+          {isSearching && (
+            <div className="px-4 py-3 text-xs text-muted-foreground">
+              Searching...
+            </div>
+          )}
+          {indexedPages.length > 0 && (
+            <div className="px-4 pb-2 pt-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Pages & Actions
+            </div>
+          )}
+          {indexedPages.map((item) => {
             const Icon = item.icon;
-            const isActive = index === activeIndex;
+            const isActive = item.index === activeIndex;
             return (
               <button
                 key={item.id}
@@ -177,7 +359,7 @@ export default function CommandBar({
                     ? 'bg-accent text-accent-foreground'
                     : 'text-foreground hover:bg-accent/60'
                 }`}
-                onMouseEnter={() => setActiveIndex(index)}
+                onMouseEnter={() => setActiveIndex(item.index)}
                 onClick={() => handleSelect(item)}
               >
                 <Icon className="h-4 w-4" />
@@ -186,6 +368,34 @@ export default function CommandBar({
                   {item.path && (
                     <span className="text-xs text-muted-foreground">{item.path}</span>
                   )}
+                </div>
+              </button>
+            );
+          })}
+          {indexedData.length > 0 && (
+            <div className="px-4 pb-2 pt-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Data Results
+            </div>
+          )}
+          {indexedData.map((item) => {
+            const Icon = item.icon;
+            const isActive = item.index === activeIndex;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                className={`flex w-full items-center gap-3 px-4 py-3 text-left text-sm transition-colors ${
+                  isActive
+                    ? 'bg-accent text-accent-foreground'
+                    : 'text-foreground hover:bg-accent/60'
+                }`}
+                onMouseEnter={() => setActiveIndex(item.index)}
+                onClick={() => handleSelect(item)}
+              >
+                <Icon className="h-4 w-4" />
+                <div className="flex flex-col">
+                  <span className="font-medium">{item.label}</span>
+                  <span className="text-xs text-muted-foreground">{item.description}</span>
                 </div>
               </button>
             );

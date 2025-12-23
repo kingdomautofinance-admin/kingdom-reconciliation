@@ -1,5 +1,6 @@
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
 import { useState, useRef, useMemo, useEffect, type RefObject } from 'react';
+import { useLocation } from 'wouter';
 import { supabase } from '@/lib/supabase';
 import type { Transaction, ReconciliationStatus } from '@/lib/database.types';
 import { queryClient } from '@/lib/queryClient';
@@ -36,6 +37,9 @@ const buildAmountCondition = (rawTerm: string) => {
 
 export default function KingdomTransactions() {
   const { showToast } = useToast();
+  const [location] = useLocation();
+  const urlParams = useMemo(() => new URLSearchParams(location.split('?')[1] || ''), [location]);
+  const initialSearch = urlParams.get('q') || '';
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<ReconciliationStatus | 'all' | 'kingdom' | 'deleted'>('all');
   const [selectedForMatch, setSelectedForMatch] = useState<Transaction | null>(null);
@@ -80,6 +84,13 @@ export default function KingdomTransactions() {
     pendingIsoDateTo !== appliedIsoDateTo;
 
   const hasActiveFilters = Boolean(appliedSearchTerm || appliedIsoDateFrom || appliedIsoDateTo);
+
+  useEffect(() => {
+    if (initialSearch) {
+      setSearchTerm(initialSearch);
+      setAppliedSearchTerm(initialSearch.trim());
+    }
+  }, [initialSearch]);
 
   const handleApplyFilters = () => {
     setAppliedSearchTerm(normalizedSearchInput);
@@ -490,7 +501,7 @@ export default function KingdomTransactions() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Bank and Credit Card Reconciliation</h1>
           <p className="text-muted-foreground">
-            View and confirm all the payments included have been received
+            View and confirm all the payments included have been received.
           </p>
         </div>
         <Button
