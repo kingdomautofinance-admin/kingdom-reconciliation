@@ -34,7 +34,7 @@ export default function Sidebar({ expanded, onToggle }: SidebarProps) {
       </div>
 
       <nav className="flex-1 overflow-y-auto px-2 pb-6 pt-4" aria-label="Primary">
-        <div className="space-y-[3px]">
+        <div className="space-y-1">
           {primaryNavItems.map((item) => {
             const isActive = location === item.path;
             const Icon = item.icon;
@@ -60,27 +60,29 @@ export default function Sidebar({ expanded, onToggle }: SidebarProps) {
 
         {secondaryNavItems.length > 0 && (
           <div className="mt-6 border-t border-border pt-4">
-            {secondaryNavItems.map((item) => {
-              const isActive = location === item.path;
-              const Icon = item.icon;
-              return (
-                <Link key={item.path} href={item.path}>
-                  <a
-                    className={cn(
-                      'group flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-                      isActive
-                        ? 'bg-accent text-accent-foreground'
-                        : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground',
-                      !expanded && 'justify-center h-10 w-10 p-0'
-                    )}
-                    title={!expanded ? item.label : undefined}
-                  >
-                    <Icon className="h-4 w-4" />
-                    {expanded && <span>{item.label}</span>}
-                  </a>
-                </Link>
-              );
-            })}
+            <div className="space-y-1">
+              {secondaryNavItems.map((item) => {
+                const isActive = location === item.path;
+                const Icon = item.icon;
+                return (
+                  <Link key={item.path} href={item.path}>
+                    <a
+                      className={cn(
+                        'group flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+                        isActive
+                          ? 'bg-accent text-accent-foreground'
+                          : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground',
+                        !expanded && 'justify-center h-10 w-10 p-0'
+                      )}
+                      title={!expanded ? item.label : undefined}
+                    >
+                      <Icon className="h-4 w-4" />
+                      {expanded && <span>{item.label}</span>}
+                    </a>
+                  </Link>
+                );
+              })}
+            </div>
           </div>
         )}
       </nav>

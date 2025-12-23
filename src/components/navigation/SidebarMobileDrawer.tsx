@@ -74,26 +74,28 @@ export default function SidebarMobileDrawer({ open, onClose }: SidebarMobileDraw
 
           {secondaryNavItems.length > 0 && (
             <div className="mt-6 border-t border-border pt-4">
-              {secondaryNavItems.map((item) => {
-                const isActive = location === item.path;
-                const Icon = item.icon;
-                return (
-                  <Link key={item.path} href={item.path}>
-                    <a
-                      onClick={onClose}
-                      className={cn(
-                        'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-                        isActive
-                          ? 'bg-accent text-accent-foreground'
-                          : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground'
-                      )}
-                    >
-                      <Icon className="h-4 w-4" />
-                      {item.label}
-                    </a>
-                  </Link>
-                );
-              })}
+              <div className="space-y-1">
+                {secondaryNavItems.map((item) => {
+                  const isActive = location === item.path;
+                  const Icon = item.icon;
+                  return (
+                    <Link key={item.path} href={item.path}>
+                      <a
+                        onClick={onClose}
+                        className={cn(
+                          'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+                          isActive
+                            ? 'bg-accent text-accent-foreground'
+                            : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground'
+                        )}
+                      >
+                        <Icon className="h-4 w-4" />
+                        {item.label}
+                      </a>
+                    </Link>
+                  );
+                })}
+              </div>
             </div>
           )}
         </nav>
