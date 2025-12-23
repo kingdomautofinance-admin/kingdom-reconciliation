@@ -28,7 +28,7 @@ export const primaryNavItems: NavItem[] = [
     group: 'primary'
   },
   {
-    label: 'Bank and Credit Card Reconciliation',
+    label: 'Bank and Credit Card',
     path: '/kingdom',
     icon: Crown,
     group: 'primary'
