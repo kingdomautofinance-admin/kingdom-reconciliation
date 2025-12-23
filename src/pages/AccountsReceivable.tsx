@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { useLocation } from 'wouter';
-import { AlertCircle, Link2, Loader2, Search, SlidersHorizontal, X, Calendar, Download, Copy } from 'lucide-react';
+import { AlertCircle, Link2, Loader2, Search, SlidersHorizontal, X, Calendar, Download, Copy, ChevronDown } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { queryClient } from '@/lib/queryClient';
 import type {
@@ -101,6 +101,7 @@ export default function AccountsReceivable() {
   const [overrideMode, setOverrideMode] = useState<'mark' | 'undo'>('mark');
   const [overrideNote, setOverrideNote] = useState('');
   const [overrideStep, setOverrideStep] = useState<'note' | 'confirm'>('note');
+  const [isOutstandingOpen, setIsOutstandingOpen] = useState(false);
 
   const [allocationsTarget, setAllocationsTarget] = useState<DealerReceivable | null>(null);
   const [matchModalOpen, setMatchModalOpen] = useState(false);
@@ -705,6 +706,53 @@ export default function AccountsReceivable() {
         </Button>
       </div>
 
+      <Card className="p-4 space-y-3">
+        <button
+          type="button"
+          className="flex w-full items-center justify-between text-left"
+          onClick={() => setIsOutstandingOpen((prev) => !prev)}
+          aria-expanded={isOutstandingOpen}
+          aria-controls="outstanding-by-dealership"
+        >
+          <div>
+            <h2 className="text-sm font-semibold">Outstanding by Dealership</h2>
+            <p className="text-xs text-muted-foreground">
+              Total outstanding: {formatCurrency(outstandingSummary?.total || 0)}
+            </p>
+          </div>
+          <ChevronDown
+            className={`h-4 w-4 text-muted-foreground transition-transform ${isOutstandingOpen ? 'rotate-180' : ''}`}
+          />
+        </button>
+        {isOutstandingOpen && (
+          <div id="outstanding-by-dealership" className="space-y-2">
+            {outstandingSummary?.byDealership.length === 0 && (
+              <div className="text-sm text-muted-foreground">No outstanding balances.</div>
+            )}
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {outstandingSummary?.byDealership.map(entry => (
+                <Button
+                  key={entry.dealership}
+                  variant="outline"
+                  className="flex items-center justify-between h-auto py-3"
+                  onClick={() => {
+                    setDealershipFilter(entry.dealership);
+                    setAppliedFilters(prev => ({
+                      ...prev,
+                      dealership: entry.dealership,
+                    }));
+                    void queryClient.invalidateQueries({ queryKey: ['dealer-receivables'] });
+                  }}
+                >
+                  <span className="font-normal">{entry.dealership}</span>
+                  <span className="font-semibold ml-3">{formatCurrency(entry.amount)}</span>
+                </Button>
+              ))}
+            </div>
+          </div>
+        )}
+      </Card>
+
       <div className="flex flex-wrap gap-4">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -804,40 +852,6 @@ export default function AccountsReceivable() {
           Received
         </Button>
       </div>
-
-      <Card className="p-4 space-y-3">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-sm font-semibold">Outstanding by Dealership</h2>
-            <p className="text-xs text-muted-foreground">
-              Total outstanding: {formatCurrency(outstandingSummary?.total || 0)}
-            </p>
-          </div>
-        </div>
-        {outstandingSummary?.byDealership.length === 0 && (
-          <div className="text-sm text-muted-foreground">No outstanding balances.</div>
-        )}
-        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-          {outstandingSummary?.byDealership.map(entry => (
-            <Button
-              key={entry.dealership}
-              variant="outline"
-              className="flex items-center justify-between h-auto py-3"
-              onClick={() => {
-                setDealershipFilter(entry.dealership);
-                setAppliedFilters(prev => ({
-                  ...prev,
-                  dealership: entry.dealership,
-                }));
-                void queryClient.invalidateQueries({ queryKey: ['dealer-receivables'] });
-              }}
-            >
-              <span className="font-normal">{entry.dealership}</span>
-              <span className="font-semibold ml-3">{formatCurrency(entry.amount)}</span>
-            </Button>
-          ))}
-        </div>
-      </Card>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">

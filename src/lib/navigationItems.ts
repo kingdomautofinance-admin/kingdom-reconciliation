@@ -22,7 +22,7 @@ export const primaryNavItems: NavItem[] = [
     group: 'primary'
   },
   {
-    label: 'Accounts Receivable',
+    label: 'Accounts Receivables',
     path: '/accounts-receivable',
     icon: Landmark,
     group: 'primary'
