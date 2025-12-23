@@ -497,9 +497,9 @@ export default function Transactions() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Transactions Sheets</h1>
+          <h1 className="text-3xl font-bold tracking-tight">Transactions</h1>
           <p className="text-muted-foreground">
-            View and manage all financial transactions
+            View and confirm all payments have been included in the spreadsheet
           </p>
         </div>
         <Button
@@ -919,6 +919,7 @@ function TransactionCard({
               <Button
                 size="icon"
                 variant={selectedForMatch?.id === transaction.id ? 'default' : 'outline'}
+                className="h-10 w-10"
                 onClick={() => {
                   if (selectedForMatch?.id === transaction.id) {
                     onSelectForMatch(null);
@@ -966,6 +967,7 @@ function TransactionCard({
                 <Button
                   size="icon"
                   variant="ghost"
+                  className="h-10 w-10"
                   onClick={() => onEdit(transaction)}
                   title="Edit transaction"
                   aria-label="Edit transaction"
@@ -975,6 +977,7 @@ function TransactionCard({
                 <Button
                   size="icon"
                   variant="ghost"
+                  className="h-10 w-10"
                   onClick={() => onDelete(transaction)}
                   title="Delete transaction"
                   aria-label="Delete transaction"

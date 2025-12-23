@@ -20,7 +20,15 @@ export default function AppLayout({ children }: AppLayoutProps) {
   });
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [location] = useLocation();
-  const { isOpen: isCommandBarOpen, open, close } = useCommandBar();
+  const {
+    isOpen: isCommandBarOpen,
+    query: commandQuery,
+    setQuery: setCommandQuery,
+    open,
+    openFresh,
+    openWithQuery,
+    close,
+  } = useCommandBar();
 
   useEffect(() => {
     localStorage.setItem(SIDEBAR_STORAGE_KEY, String(isSidebarExpanded));
@@ -61,8 +69,11 @@ export default function AppLayout({ children }: AppLayoutProps) {
         />
         <div className="flex min-w-0 flex-1 flex-col">
           <TopBar
-            onOpenCommandBar={open}
+            onOpenCommandBar={openFresh}
             onOpenMobileMenu={() => setIsMobileMenuOpen(true)}
+            searchValue={commandQuery}
+            onSearchChange={(value) => openWithQuery(value)}
+            onSearchFocus={open}
           />
           <Breadcrumbs />
           <main
@@ -73,7 +84,12 @@ export default function AppLayout({ children }: AppLayoutProps) {
           </main>
         </div>
       </div>
-      <CommandBar isOpen={isCommandBarOpen} onClose={close} />
+      <CommandBar
+        isOpen={isCommandBarOpen}
+        onClose={close}
+        query={commandQuery}
+        onQueryChange={setCommandQuery}
+      />
     </div>
   );
 }

@@ -1,18 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { useLocation } from 'wouter';
-import {
-  Search,
-  LayoutDashboard,
-  List,
-  Crown,
-  BarChart3,
-  Upload,
-  FileDown
-} from 'lucide-react';
+import { Search, Upload, FileDown } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
+import { navItems } from '@/lib/navigationItems';
 
 type CommandItem = {
   id: string;
@@ -25,36 +18,64 @@ type CommandItem = {
 type CommandBarProps = {
   isOpen: boolean;
   onClose: () => void;
+  query: string;
+  onQueryChange: (value: string) => void;
 };
 
-export default function CommandBar({ isOpen, onClose }: CommandBarProps) {
+export default function CommandBar({
+  isOpen,
+  onClose,
+  query,
+  onQueryChange,
+}: CommandBarProps) {
   const [, setLocation] = useLocation();
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const [query, setQuery] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
 
   const items = useMemo<CommandItem[]>(
-    () => [
-      { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, path: '/' },
-      { id: 'transactions', label: 'Transactions', icon: List, path: '/transactions' },
-      { id: 'kingdom', label: 'Kingdom', icon: Crown, path: '/kingdom' },
-      { id: 'reports', label: 'Reports', icon: BarChart3, path: '/reports' },
-      { id: 'upload', label: 'Upload', icon: Upload, path: '/upload' },
-      {
-        id: 'upload-csv',
-        label: 'Upload CSV',
-        icon: Upload,
-        path: '/upload',
-        keywords: ['import', 'csv']
-      },
-      {
-        id: 'export-report',
-        label: 'Export report',
-        icon: FileDown,
-        path: '/reports',
-        keywords: ['download', 'csv', 'pdf']
-      }
-    ],
+    () => {
+      const navCommands = navItems.map((item) => {
+        const keywords = [item.label.toLowerCase()];
+        if (item.path === '/transactions') {
+          keywords.push('payments', 'sheet', 'spreadsheet');
+        }
+        if (item.path === '/kingdom') {
+          keywords.push('kingdom', 'bank', 'credit card', 'reconciliation', 'payments');
+        }
+        if (item.path === '/reports') {
+          keywords.push('analytics', 'export');
+        }
+        if (item.path === '/accounts-receivable') {
+          keywords.push('receivables', 'dealers');
+        }
+        return {
+          id: item.path === '/' ? 'dashboard' : item.path.replace('/', ''),
+          label: item.label,
+          icon: item.icon,
+          path: item.path,
+          keywords,
+        };
+      });
+
+      return [
+        ...navCommands,
+        { id: 'upload', label: 'Upload', icon: Upload, path: '/upload', keywords: ['import'] },
+        {
+          id: 'upload-csv',
+          label: 'Upload CSV',
+          icon: Upload,
+          path: '/upload',
+          keywords: ['import', 'csv', 'bank', 'credit card']
+        },
+        {
+          id: 'export-report',
+          label: 'Export report',
+          icon: FileDown,
+          path: '/reports',
+          keywords: ['download', 'csv', 'pdf']
+        }
+      ];
+    },
     []
   );
 
@@ -73,7 +94,6 @@ export default function CommandBar({ isOpen, onClose }: CommandBarProps) {
 
   useEffect(() => {
     if (!isOpen) return;
-    setQuery('');
     setActiveIndex(0);
     requestAnimationFrame(() => inputRef.current?.focus());
   }, [isOpen]);
@@ -133,9 +153,9 @@ export default function CommandBar({ isOpen, onClose }: CommandBarProps) {
           <Input
             ref={inputRef}
             value={query}
-            onChange={(event) => setQuery(event.target.value)}
+            onChange={(event) => onQueryChange(event.target.value)}
             onKeyDown={handleInputKeyDown}
-            placeholder="Search or jump to a page..."
+            placeholder="Search anything..."
             className="h-9 border-0 px-0 shadow-none focus-visible:ring-0"
           />
         </div>

@@ -488,9 +488,9 @@ export default function KingdomTransactions() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Transaction Kingdom System</h1>
+          <h1 className="text-3xl font-bold tracking-tight">Bank and Credit Card Reconciliation</h1>
           <p className="text-muted-foreground">
-            View reconciled and pending transactions
+            View and confirm all the payments included have been received
           </p>
         </div>
         <Button
