@@ -248,7 +248,7 @@ export default function Reports() {
 
       {/* Date Range Filters and View Toggle */}
       <Card className="p-4">
-        <div className="flex flex-col lg:flex-row gap-4 lg:items-center lg:justify-between">
+        <div className="flex flex-col lg:flex-row gap-4 lg:items-end lg:justify-between">
           {/* Date Range Section */}
           <div className="flex flex-wrap gap-4 items-end flex-1">
             <div className="flex-1 min-w-[200px]">
@@ -306,7 +306,7 @@ export default function Reports() {
                 </div>
               </div>
             </div>
-            <div className="flex gap-2 items-start">
+            <div className="flex gap-2">
               <Button onClick={handleApplyFilters} disabled={!filtersChanged} size="sm">
                 Apply
               </Button>
@@ -322,7 +322,7 @@ export default function Reports() {
           </div>
 
           {/* View Toggle */}
-          <div className="flex items-center lg:items-start">
+          <div className="flex">
             <ReportViewToggle view={view} onViewChange={setView} />
           </div>
         </div>
