@@ -5,21 +5,12 @@ import { supabase } from '@/lib/supabase';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
-import { Calendar, ChevronRight, TrendingUp, CheckCircle2, Clock } from 'lucide-react';
-import { formatCurrency, formatDate, parseUSDateToISO, formatUSDateInput, formatISODateToUS } from '@/lib/utils';
-import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts';
-
-interface DateSummary {
-  date: string;
-  reconciled_count: number;
-  pending_count: number;
-  total_count: number;
-  reconciled_amount: number;
-  pending_amount: number;
-  total_amount: number;
-  reconciliation_percentage: number;
-}
+import { Calendar, TrendingUp, CheckCircle2, Clock } from 'lucide-react';
+import { parseUSDateToISO, formatUSDateInput, formatISODateToUS } from '@/lib/utils';
+import { DateSummaryCard, type DateSummary } from '@/components/reports/DateSummaryCard';
+import { ReportViewToggle, type ViewType } from '@/components/reports/ReportViewToggle';
+import { MonthlyCalendarView } from '@/components/reports/MonthlyCalendarView';
+import { YearlyCalendarView } from '@/components/reports/YearlyCalendarView';
 
 export default function Reports() {
   const [, setLocation] = useLocation();
@@ -27,6 +18,11 @@ export default function Reports() {
   const [dateTo, setDateTo] = useState('');
   const dateFromPickerRef = useRef<HTMLInputElement>(null);
   const dateToPickerRef = useRef<HTMLInputElement>(null);
+
+  // View state management
+  const [view, setView] = useState<ViewType>('list');
+  const [selectedMonth, setSelectedMonth] = useState<number | null>(null);
+  const [selectedYear, setSelectedYear] = useState<number | null>(null);
 
   const openDatePicker = (ref: RefObject<HTMLInputElement>) => {
     const input = ref.current;
@@ -182,6 +178,12 @@ export default function Reports() {
     setLocation(`/transactions?dateFrom=${formattedDate}&dateTo=${formattedDate}`);
   };
 
+  const handleMonthClick = (month: number) => {
+    setSelectedMonth(month);
+    setSelectedYear(new Date(effectiveEndDate).getFullYear());
+    setView('monthly');
+  };
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -321,134 +323,53 @@ export default function Reports() {
         </div>
       </Card>
 
-      {/* Date Summaries List */}
-      <div className="space-y-3">
-        {dateSummaries?.length === 0 ? (
-          <Card className="p-8">
-            <div className="text-center text-muted-foreground">
-              <Clock className="h-12 w-12 mx-auto mb-2 opacity-50" />
-              <p>No transactions found in the selected date range</p>
-            </div>
-          </Card>
-        ) : (
-          dateSummaries?.map((summary) => (
-            <DateSummaryCard
-              key={summary.date}
-              summary={summary}
-              onClick={() => handleDateClick(summary.date)}
-            />
-          ))
-        )}
+      {/* View Toggle */}
+      <div className="flex justify-center">
+        <ReportViewToggle view={view} onViewChange={setView} />
       </div>
+
+      {/* List View */}
+      {view === 'list' && (
+        <div className="space-y-3">
+          {dateSummaries?.length === 0 ? (
+            <Card className="p-8">
+              <div className="text-center text-muted-foreground">
+                <Clock className="h-12 w-12 mx-auto mb-2 opacity-50" />
+                <p>No transactions found in the selected date range</p>
+              </div>
+            </Card>
+          ) : (
+            dateSummaries?.map((summary) => (
+              <DateSummaryCard
+                key={summary.date}
+                summary={summary}
+                onClick={() => handleDateClick(summary.date)}
+              />
+            ))
+          )}
+        </div>
+      )}
+
+      {/* Monthly Calendar View */}
+      {view === 'monthly' && (
+        <MonthlyCalendarView
+          dateSummaries={dateSummaries || []}
+          dateRange={{ from: effectiveStartDate, to: effectiveEndDate }}
+          onDateClick={handleDateClick}
+          initialMonth={selectedMonth}
+          initialYear={selectedYear}
+        />
+      )}
+
+      {/* Yearly Calendar View */}
+      {view === 'yearly' && (
+        <YearlyCalendarView
+          dateSummaries={dateSummaries || []}
+          year={selectedYear || new Date().getFullYear()}
+          onMonthClick={handleMonthClick}
+        />
+      )}
     </div>
   );
 }
 
-function DateSummaryCard({ summary, onClick }: { summary: DateSummary; onClick: () => void }) {
-  const getPercentageColor = (percentage: number) => {
-    if (percentage === 100) return 'text-green-600 dark:text-green-400';
-    if (percentage >= 80) return 'text-yellow-600 dark:text-yellow-400';
-    return 'text-orange-600 dark:text-orange-400';
-  };
-
-  const getChartColors = (percentage: number) => {
-    if (percentage === 0) return { fill: '#d1d5db', empty: '#f3f4f6' }; // Light grey for 0%
-    if (percentage === 100) return { fill: '#16a34a', empty: '#dcfce7' }; // Dark green with light green bg
-    if (percentage >= 71) return { fill: '#22c55e', empty: '#ffffff' }; // Light green with white bg
-    if (percentage >= 41) return { fill: '#eab308', empty: '#fef9c3' }; // Yellow with light yellow bg
-    return { fill: '#ef4444', empty: '#fee2e2' }; // Red with light red bg (1-40%)
-  };
-
-  const chartColors = getChartColors(summary.reconciliation_percentage);
-
-  // Data for pie chart
-  const chartData = [
-    { name: 'Reconciled', value: summary.reconciled_count },
-    { name: 'Pending', value: summary.pending_count },
-  ];
-
-  return (
-    <Card 
-      className="p-4 hover:shadow-md transition-shadow cursor-pointer"
-      onClick={onClick}
-    >
-      <div className="flex items-center gap-4">
-        {/* Circular Progress Chart */}
-        <div className="flex-shrink-0 w-12 h-12">
-          <ResponsiveContainer width="100%" height="100%">
-            <PieChart>
-              <Pie
-                data={chartData}
-                cx="50%"
-                cy="50%"
-                innerRadius={14}
-                outerRadius={22}
-                paddingAngle={0}
-                dataKey="value"
-                startAngle={90}
-                endAngle={-270}
-              >
-                <Cell fill={chartColors.fill} />
-                <Cell fill={chartColors.empty} />
-              </Pie>
-            </PieChart>
-          </ResponsiveContainer>
-        </div>
-
-        {/* Date */}
-        <div className="flex-shrink-0 w-32">
-          <p className="text-sm text-muted-foreground">Date</p>
-          <p className="font-semibold">{formatDate(summary.date)}</p>
-        </div>
-
-        {/* Reconciled */}
-        <div className="flex-1 min-w-[120px]">
-          <p className="text-sm text-muted-foreground">Reconciled</p>
-          <p className="font-semibold text-green-600 dark:text-green-400">
-            {summary.reconciled_count}
-          </p>
-          <p className="text-xs text-muted-foreground">
-            {formatCurrency(summary.reconciled_amount)}
-          </p>
-        </div>
-
-        {/* Pending */}
-        <div className="flex-1 min-w-[120px]">
-          <p className="text-sm text-muted-foreground">Pending</p>
-          <p className="font-semibold text-orange-600 dark:text-orange-400">
-            {summary.pending_count}
-          </p>
-          <p className="text-xs text-muted-foreground">
-            {formatCurrency(summary.pending_amount)}
-          </p>
-        </div>
-
-        {/* Total */}
-        <div className="flex-1 min-w-[120px]">
-          <p className="text-sm text-muted-foreground">Total</p>
-          <p className="font-semibold">
-            {summary.total_count}
-          </p>
-          <p className="text-xs text-muted-foreground">
-            {formatCurrency(summary.total_amount)}
-          </p>
-        </div>
-
-        {/* Percentage Badge */}
-        <div className="flex-shrink-0">
-          <Badge 
-            variant="outline" 
-            className={`${getPercentageColor(summary.reconciliation_percentage)} border-current text-lg font-bold px-3 py-1`}
-          >
-            {summary.reconciliation_percentage}%
-          </Badge>
-        </div>
-
-        {/* Arrow Icon */}
-        <div className="flex-shrink-0">
-          <ChevronRight className="h-5 w-5 text-muted-foreground" />
-        </div>
-      </div>
-    </Card>
-  );
-}
