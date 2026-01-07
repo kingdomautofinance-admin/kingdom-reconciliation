@@ -178,9 +178,9 @@ export default function Reports() {
     setLocation(`/transactions?dateFrom=${formattedDate}&dateTo=${formattedDate}`);
   };
 
-  const handleMonthClick = (month: number) => {
+  const handleMonthClick = (month: number, year: number) => {
     setSelectedMonth(month);
-    setSelectedYear(new Date(effectiveEndDate).getFullYear());
+    setSelectedYear(year);
     setView('monthly');
   };
 
@@ -246,87 +246,91 @@ export default function Reports() {
         </div>
       )}
 
-      {/* Date Range Filters */}
+      {/* Date Range Filters and View Toggle */}
       <Card className="p-4">
-        <div className="flex flex-wrap gap-4 items-end">
-          <div className="flex-1 min-w-[200px]">
-            <label className="text-sm font-medium mb-2 block">Date Range</label>
-            <div className="flex gap-2">
-              <div className="relative flex-1">
-                <Calendar className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input
-                  type="text"
-                  placeholder="MM/DD/YYYY"
-                  value={dateFrom}
-                  onChange={(e) => {
-                    const formatted = formatUSDateInput(e.target.value);
-                    setDateFrom(formatted);
-                  }}
-                  onClick={() => openDatePicker(dateFromPickerRef)}
-                  className="pl-9 cursor-pointer"
-                  maxLength={10}
-                />
-                <input
-                  ref={dateFromPickerRef}
-                  type="date"
-                  lang="en-US"
-                  tabIndex={-1}
-                  aria-hidden="true"
-                  value={parseUSDateToISO(dateFrom) ?? ''}
-                  onChange={(e) => setDateFrom(e.target.value ? formatISODateToUS(e.target.value) : '')}
-                  className="absolute inset-0 h-0 w-0 opacity-0 pointer-events-none"
-                />
-              </div>
-              <div className="relative flex-1">
-                <Calendar className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input
-                  type="text"
-                  placeholder="MM/DD/YYYY"
-                  value={dateTo}
-                  onChange={(e) => {
-                    const formatted = formatUSDateInput(e.target.value);
-                    setDateTo(formatted);
-                  }}
-                  onClick={() => openDatePicker(dateToPickerRef)}
-                  className="pl-9 cursor-pointer"
-                  maxLength={10}
-                />
-                <input
-                  ref={dateToPickerRef}
-                  type="date"
-                  lang="en-US"
-                  tabIndex={-1}
-                  aria-hidden="true"
-                  value={parseUSDateToISO(dateTo) ?? ''}
-                  onChange={(e) => setDateTo(e.target.value ? formatISODateToUS(e.target.value) : '')}
-                  className="absolute inset-0 h-0 w-0 opacity-0 pointer-events-none"
-                />
+        <div className="flex flex-col lg:flex-row gap-4 lg:items-center lg:justify-between">
+          {/* Date Range Section */}
+          <div className="flex flex-wrap gap-4 items-end flex-1">
+            <div className="flex-1 min-w-[200px]">
+              <label className="text-sm font-medium mb-2 block">Date Range</label>
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <Calendar className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    type="text"
+                    placeholder="MM/DD/YYYY"
+                    value={dateFrom}
+                    onChange={(e) => {
+                      const formatted = formatUSDateInput(e.target.value);
+                      setDateFrom(formatted);
+                    }}
+                    onClick={() => openDatePicker(dateFromPickerRef)}
+                    className="pl-9 cursor-pointer"
+                    maxLength={10}
+                  />
+                  <input
+                    ref={dateFromPickerRef}
+                    type="date"
+                    lang="en-US"
+                    tabIndex={-1}
+                    aria-hidden="true"
+                    value={parseUSDateToISO(dateFrom) ?? ''}
+                    onChange={(e) => setDateFrom(e.target.value ? formatISODateToUS(e.target.value) : '')}
+                    className="absolute inset-0 h-0 w-0 opacity-0 pointer-events-none"
+                  />
+                </div>
+                <div className="relative flex-1">
+                  <Calendar className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    type="text"
+                    placeholder="MM/DD/YYYY"
+                    value={dateTo}
+                    onChange={(e) => {
+                      const formatted = formatUSDateInput(e.target.value);
+                      setDateTo(formatted);
+                    }}
+                    onClick={() => openDatePicker(dateToPickerRef)}
+                    className="pl-9 cursor-pointer"
+                    maxLength={10}
+                  />
+                  <input
+                    ref={dateToPickerRef}
+                    type="date"
+                    lang="en-US"
+                    tabIndex={-1}
+                    aria-hidden="true"
+                    value={parseUSDateToISO(dateTo) ?? ''}
+                    onChange={(e) => setDateTo(e.target.value ? formatISODateToUS(e.target.value) : '')}
+                    className="absolute inset-0 h-0 w-0 opacity-0 pointer-events-none"
+                  />
+                </div>
               </div>
             </div>
-            <p className="text-xs text-muted-foreground mt-1">
-              Default: Last 30 days
-            </p>
+            <div className="flex gap-2 items-start">
+              <Button onClick={handleApplyFilters} disabled={!filtersChanged} size="sm">
+                Apply
+              </Button>
+              <Button
+                variant="outline"
+                onClick={handleClearFilters}
+                disabled={!hasActiveFilters && dateFrom === '' && dateTo === ''}
+                size="sm"
+              >
+                Clear
+              </Button>
+            </div>
           </div>
-          <div className="flex gap-2">
-            <Button onClick={handleApplyFilters} disabled={!filtersChanged} size="sm">
-              Apply
-            </Button>
-            <Button
-              variant="outline"
-              onClick={handleClearFilters}
-              disabled={!hasActiveFilters && dateFrom === '' && dateTo === ''}
-              size="sm"
-            >
-              Clear
-            </Button>
+
+          {/* View Toggle */}
+          <div className="flex items-center lg:items-start">
+            <ReportViewToggle view={view} onViewChange={setView} />
           </div>
         </div>
-      </Card>
 
-      {/* View Toggle */}
-      <div className="flex justify-center">
-        <ReportViewToggle view={view} onViewChange={setView} />
-      </div>
+        <p className="text-xs text-muted-foreground mt-2">
+          Default: Last 30 days
+        </p>
+      </Card>
 
       {/* List View */}
       {view === 'list' && (
