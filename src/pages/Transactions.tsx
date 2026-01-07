@@ -8,7 +8,7 @@ import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Eye, Search, CheckCircle2, Loader2, Link2, Calendar, Trash2, Pencil } from 'lucide-react';
+import { Eye, Search, CheckCircle2, Loader2, Link2, Link2Off, Calendar, Trash2, Pencil } from 'lucide-react';
 import {
   formatDate,
   formatCurrency,
@@ -20,6 +20,7 @@ import { autoReconcileAll } from '@/lib/reconciliation';
 import { fetchPreferredMinTransactionDate } from '@/lib/transactionFilters';
 import { DeleteTransactionModal } from '@/components/DeleteTransactionModal';
 import { EditTransactionModal } from '@/components/EditTransactionModal';
+import { UnreconcileTransactionModal } from '@/components/UnreconcileTransactionModal';
 import { useToast } from '@/components/ui/toast';
 
 const TRANSACTIONS_PER_PAGE = 50;
@@ -59,6 +60,8 @@ export default function Transactions() {
   const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [transactionToEdit, setTransactionToEdit] = useState<Transaction | null>(null);
+  const [unreconcileModalOpen, setUnreconcileModalOpen] = useState(false);
+  const [transactionToUnreconcile, setTransactionToUnreconcile] = useState<Transaction | null>(null);
   const observerTarget = useRef<HTMLDivElement>(null);
   const dateFromPickerRef = useRef<HTMLInputElement>(null);
   const dateToPickerRef = useRef<HTMLInputElement>(null);
@@ -415,6 +418,158 @@ export default function Transactions() {
     },
   });
 
+  const unreconcileTransactionMutation = useMutation({
+    mutationFn: async ({ transactionId, reason }: { transactionId: string; reason: string }) => {
+      // STEP 1: Fetch current transaction with validation
+      const { data: transaction, error: fetchError } = await supabase
+        .from('transactions')
+        .select('id, status, matched_transaction_id, source')
+        .eq('id', transactionId)
+        .single();
+
+      if (fetchError) throw new Error(`Failed to fetch transaction: ${fetchError.message}`);
+      if (!transaction) throw new Error('Transaction not found');
+      if (transaction.status !== 'reconciled') throw new Error('Transaction is not reconciled');
+      if (!transaction.matched_transaction_id) throw new Error('No matched transaction found');
+
+      // STEP 2: Fetch matched transaction
+      const { data: matchedTransaction, error: matchedFetchError } = await supabase
+        .from('transactions')
+        .select('id, status, matched_transaction_id, source, is_deleted')
+        .eq('id', transaction.matched_transaction_id)
+        .single();
+
+      if (matchedFetchError) throw new Error(`Failed to fetch matched transaction: ${matchedFetchError.message}`);
+      if (!matchedTransaction) throw new Error('Matched transaction not found or was deleted');
+
+      // STEP 3: Determine original statuses based on source
+      const transaction1NewStatus = transaction.source === 'Google Sheets' ? 'pending-ledger' : 'pending-statement';
+      const transaction2NewStatus = matchedTransaction.source === 'Google Sheets' ? 'pending-ledger' : 'pending-statement';
+
+      // STEP 4: Update transaction 1
+      const { error: update1Error } = await supabase
+        .from('transactions')
+        .update({
+          status: transaction1NewStatus,
+          matched_transaction_id: null,
+          confidence: null,
+        })
+        .eq('id', transaction.id);
+
+      if (update1Error) throw new Error(`Failed to update transaction 1: ${update1Error.message}`);
+
+      // STEP 5: Update transaction 2 (with rollback on failure)
+      const { error: update2Error } = await supabase
+        .from('transactions')
+        .update({
+          status: transaction2NewStatus,
+          matched_transaction_id: null,
+          confidence: null,
+        })
+        .eq('id', matchedTransaction.id);
+
+      if (update2Error) {
+        // ROLLBACK transaction 1
+        await supabase
+          .from('transactions')
+          .update({
+            status: 'reconciled',
+            matched_transaction_id: matchedTransaction.id,
+            confidence: 100,
+          })
+          .eq('id', transaction.id);
+
+        throw new Error(`Failed to update transaction 2: ${update2Error.message}`);
+      }
+
+      // STEP 6: Handle dealer receivable matches
+      const { data: receivableMatches } = await supabase
+        .from('dealer_receivable_matches')
+        .select('id, receivable_id, transaction_id, matched_amount')
+        .or(`transaction_id.eq.${transaction.id},transaction_id.eq.${matchedTransaction.id}`);
+
+      if (receivableMatches && receivableMatches.length > 0) {
+        const receivableIds = [...new Set(receivableMatches.map(m => m.receivable_id))];
+
+        for (const receivableId of receivableIds) {
+          // Fetch receivable
+          const { data: receivable } = await supabase
+            .from('dealer_receivables')
+            .select('id, amount, status, received_at')
+            .eq('id', receivableId)
+            .single();
+
+          if (!receivable) continue;
+
+          // Calculate remaining matched amount (excluding unreconciled transactions)
+          const { data: remainingMatches } = await supabase
+            .from('dealer_receivable_matches')
+            .select('matched_amount, transaction_id')
+            .eq('receivable_id', receivableId);
+
+          const totalMatched = (remainingMatches || [])
+            .filter(m => m.transaction_id !== transaction.id && m.transaction_id !== matchedTransaction.id)
+            .reduce((sum, match) => sum + parseFloat(String(match.matched_amount)), 0);
+
+          const receivableAmount = parseFloat(String(receivable.amount));
+
+          // Revert to pending if no longer fully matched
+          if (totalMatched < receivableAmount && receivable.status === 'received') {
+            await supabase
+              .from('dealer_receivables')
+              .update({
+                status: 'pending',
+                received_at: null,
+              })
+              .eq('id', receivableId);
+
+            // Create audit record
+            await supabase
+              .from('dealer_receivable_changes')
+              .insert({
+                receivable_id: receivableId,
+                changed_at: new Date().toISOString(),
+                field_diffs: {
+                  status: { from: 'received', to: 'pending' },
+                  received_at: { from: receivable.received_at, to: null },
+                },
+                note: `Auto-reverted due to unreconcile of transaction ${transaction.id}. Reason: ${reason}`,
+              });
+          }
+        }
+      }
+
+      // STEP 7: Create audit record (non-blocking)
+      await supabase
+        .from('unreconcile_history')
+        .insert({
+          transaction1_id: transaction.id,
+          transaction2_id: matchedTransaction.id,
+          reason: reason,
+          unreconciled_by: 'user',
+          transaction1_previous_status: 'reconciled',
+          transaction2_previous_status: 'reconciled',
+        })
+        .then(({ error }) => {
+          if (error) console.error('Failed to create audit record:', error);
+        });
+
+      return { transaction, matchedTransaction };
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['transactions'] });
+      queryClient.invalidateQueries({ queryKey: ['transaction-counts'] });
+      queryClient.invalidateQueries({ queryKey: ['dealer-receivables'] });
+      queryClient.invalidateQueries({ queryKey: ['dealer-receivable-matches'] });
+      queryClient.invalidateQueries({ queryKey: ['dealer-receivables-outstanding-summary'] });
+      showToast('Reconciliation reversed successfully!', 'success');
+    },
+    onError: (error) => {
+      showToast(`Failed to unreconcile transaction\n\n${error.message}`, 'error');
+      console.error('Unreconcile transaction error:', error);
+    },
+  });
+
   const editTransactionMutation = useMutation({
     mutationFn: async ({ transactionId, updates }: { transactionId: string; updates: Partial<Transaction> }) => {
       const { error } = await supabase
@@ -756,6 +911,23 @@ export default function Transactions() {
         }
       />
 
+      <UnreconcileTransactionModal
+        isOpen={unreconcileModalOpen}
+        onClose={() => {
+          setUnreconcileModalOpen(false);
+          setTransactionToUnreconcile(null);
+        }}
+        onConfirm={(reason) => {
+          if (transactionToUnreconcile) {
+            unreconcileTransactionMutation.mutate({
+              transactionId: transactionToUnreconcile.id,
+              reason
+            });
+          }
+        }}
+        transaction={transactionToUnreconcile}
+      />
+
       <div className="space-y-2">
         {filteredTransactions.map((transaction) => (
           <TransactionCard
@@ -779,6 +951,10 @@ export default function Transactions() {
             onEdit={(t) => {
               setTransactionToEdit(t);
               setEditModalOpen(true);
+            }}
+            onUnreconcile={(t) => {
+              setTransactionToUnreconcile(t);
+              setUnreconcileModalOpen(true);
             }}
             statusFilter={statusFilter}
           />
@@ -810,6 +986,7 @@ function TransactionCard({
   onDelete,
   onViewDeleteReason,
   onEdit,
+  onUnreconcile,
   statusFilter,
 }: {
   transaction: Transaction;
@@ -821,6 +998,7 @@ function TransactionCard({
   onDelete: (transaction: Transaction) => void;
   onViewDeleteReason: (transaction: Transaction) => void;
   onEdit: (transaction: Transaction) => void;
+  onUnreconcile: (transaction: Transaction) => void;
   statusFilter: ReconciliationStatus | 'all' | 'deleted';
 }) {
   const [showMatch, setShowMatch] = useState(false);
@@ -962,15 +1140,27 @@ function TransactionCard({
               </Button>
             )}
             {!transaction.is_deleted && transaction.status === 'reconciled' && (
-              <Button
-                size="icon"
-                variant="ghost"
-                onClick={() => setShowMatch(!showMatch)}
-                title="View matched transaction"
-                aria-label="View matched transaction"
-              >
-                <Eye className="h-4 w-4" />
-              </Button>
+              <>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={() => setShowMatch(!showMatch)}
+                  title="View matched transaction"
+                  aria-label="View matched transaction"
+                >
+                  <Eye className="h-4 w-4" />
+                </Button>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-10 w-10"
+                  onClick={() => onUnreconcile(transaction)}
+                  title="Unreconcile transaction"
+                  aria-label="Unreconcile transaction"
+                >
+                  <Link2Off className="h-4 w-4 text-destructive" />
+                </Button>
+              </>
             )}
             {transaction.is_deleted && (
               <Button

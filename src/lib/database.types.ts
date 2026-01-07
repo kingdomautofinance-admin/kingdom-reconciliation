@@ -244,6 +244,41 @@ export interface Database {
           updated_at?: string
         }
       }
+      unreconcile_history: {
+        Row: {
+          id: string
+          transaction1_id: string
+          transaction2_id: string
+          reason: string
+          unreconciled_by: string | null
+          unreconciled_at: string
+          transaction1_previous_status: string
+          transaction2_previous_status: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          transaction1_id: string
+          transaction2_id: string
+          reason: string
+          unreconciled_by?: string | null
+          unreconciled_at?: string
+          transaction1_previous_status: string
+          transaction2_previous_status: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          transaction1_id?: string
+          transaction2_id?: string
+          reason?: string
+          unreconciled_by?: string | null
+          unreconciled_at?: string
+          transaction1_previous_status?: string
+          transaction2_previous_status?: string
+          created_at?: string
+        }
+      }
       transactions: {
         Row: {
           id: string
@@ -333,5 +368,9 @@ export type UpdateSheetConnection = Database['public']['Tables']['sheet_connecti
 export type Transaction = Database['public']['Tables']['transactions']['Row'];
 export type InsertTransaction = Database['public']['Tables']['transactions']['Insert'];
 export type UpdateTransaction = Database['public']['Tables']['transactions']['Update'];
+
+export type UnreconcileHistory = Database['public']['Tables']['unreconcile_history']['Row'];
+export type InsertUnreconcileHistory = Database['public']['Tables']['unreconcile_history']['Insert'];
+export type UpdateUnreconcileHistory = Database['public']['Tables']['unreconcile_history']['Update'];
 
 export type ReconciliationStatus = 'reconciled' | 'pending-ledger' | 'pending-statement';
