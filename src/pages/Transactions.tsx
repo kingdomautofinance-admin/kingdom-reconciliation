@@ -443,8 +443,8 @@ export default function Transactions() {
       if (!matchedTransaction) throw new Error('Matched transaction not found or was deleted');
 
       // STEP 3: Determine original statuses based on source
-      const transaction1NewStatus = transaction.source === 'Google Sheets' ? 'pending-ledger' : 'pending-statement';
-      const transaction2NewStatus = matchedTransaction.source === 'Google Sheets' ? 'pending-ledger' : 'pending-statement';
+      const transaction1NewStatus = transaction.source.startsWith('Google Sheets') ? 'pending-ledger' : 'pending-statement';
+      const transaction2NewStatus = matchedTransaction.source.startsWith('Google Sheets') ? 'pending-ledger' : 'pending-statement';
 
       // STEP 4: Update transaction 1
       const { error: update1Error } = await supabase

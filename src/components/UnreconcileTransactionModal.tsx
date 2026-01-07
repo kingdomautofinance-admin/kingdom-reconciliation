@@ -79,7 +79,7 @@ export function UnreconcileTransactionModal({
   };
 
   const getOriginalStatus = (source: string) => {
-    return source === 'Google Sheets' ? 'pending-ledger' : 'pending-statement';
+    return source.startsWith('Google Sheets') ? 'pending-ledger' : 'pending-statement';
   };
 
   return (
