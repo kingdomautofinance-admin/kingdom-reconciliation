@@ -848,6 +848,19 @@ function TransactionCard({
     'pending-statement': 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200',
   };
 
+  const getStatusLabel = (status: string): string => {
+    switch (status) {
+      case 'pending-ledger':
+        return 'Pending';
+      case 'pending-statement':
+        return 'Pending';
+      case 'reconciled':
+        return 'Reconciled';
+      default:
+        return status;
+    }
+  };
+
   const getConfidenceColor = (confidence: number | null) => {
     if (!confidence) return 'bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200';
     if (confidence === 100) return 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200';
@@ -855,12 +868,12 @@ function TransactionCard({
     return 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200';
   };
 
-  // Apply 50% opacity to deleted transactions when viewing "All"
-  const cardOpacity = transaction.is_deleted && statusFilter === 'all' ? 'opacity-50' : '';
+  // Apply 60% opacity to text of deleted transactions when viewing "All"
+  const deletedTextStyle = transaction.is_deleted && statusFilter === 'all' ? 'opacity-60' : '';
 
   return (
-    <Card className={`p-4 ${cardOpacity}`}>
-      <div className="space-y-3">
+    <Card className="p-4">
+      <div className={`space-y-3 ${deletedTextStyle}`}>
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div className="flex-1 w-full grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-4">
             <div>
@@ -906,7 +919,7 @@ function TransactionCard({
             <div>
               <div className="text-xs text-muted-foreground">Status</div>
               <Badge className={statusColors[transaction.status as keyof typeof statusColors]}>
-                {transaction.status}
+                {getStatusLabel(transaction.status)}
               </Badge>
             </div>
 
