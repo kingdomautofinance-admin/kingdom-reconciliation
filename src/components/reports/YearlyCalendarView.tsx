@@ -17,7 +17,7 @@ interface MonthStats {
 }
 
 export function YearlyCalendarView({ dateSummaries, year, onMonthClick, onNavigate }: YearlyCalendarViewProps) {
-  // Group summaries by month for the displayed year
+  // Group summaries by month (data is already filtered by year in the query)
   const monthlyStats = useMemo(() => {
     const stats = new Map<number, MonthStats>();
 
@@ -28,8 +28,8 @@ export function YearlyCalendarView({ dateSummaries, year, onMonthClick, onNaviga
 
     // Populate with actual data
     dateSummaries.forEach((summary) => {
-      const [summaryYear, summaryMonth] = summary.date.split('-').map(Number);
-      if (summaryYear === year && summaryMonth >= 1 && summaryMonth <= 12) {
+      const [, summaryMonth] = summary.date.split('-').map(Number);
+      if (summaryMonth >= 1 && summaryMonth <= 12) {
         const monthData = stats.get(summaryMonth);
         if (monthData) {
           monthData.summaries.push(summary);
@@ -38,7 +38,7 @@ export function YearlyCalendarView({ dateSummaries, year, onMonthClick, onNaviga
     });
 
     return stats;
-  }, [dateSummaries, year]);
+  }, [dateSummaries]);
 
   const months = getMonthsInYear(year);
 
