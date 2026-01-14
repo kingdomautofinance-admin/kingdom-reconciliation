@@ -10,7 +10,7 @@ SELECT
   car,
   payment_method,
   source,
-  status,
+  status::text,
   matched_transaction_id,
   is_deleted
 FROM transactions
@@ -26,7 +26,7 @@ SELECT
   car,
   payment_method,
   source,
-  status,
+  status::text,
   matched_transaction_id,
   false as is_deleted
 FROM kingdom_transactions;
