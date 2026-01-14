@@ -37,3 +37,33 @@ export async function fetchPreferredMinTransactionDate(): Promise<string | null>
 
   return normalizeDate(fallbackRows?.[0]?.date);
 }
+
+export const STANDARD_PAYMENT_METHODS = [
+  'Cash',
+  'Credit Card',
+  'Deposit',
+  'Zelle',
+  'Other',
+  'Wire Transfer',
+  'Stripe receipt',
+  'Debt',
+];
+
+export async function fetchPaymentMethods(): Promise<string[]> {
+  const { data, error } = await supabase
+    .from('transactions')
+    .select('payment_method')
+    .not('payment_method', 'is', null)
+    .order('payment_method');
+  
+  if (error) throw error;
+  
+  // Get unique payment methods
+  const dbMethods = [...new Set(data.map(t => t.payment_method).filter(Boolean))] as string[];
+  
+  // Combine with standard methods
+  return [
+    ...STANDARD_PAYMENT_METHODS,
+    ...dbMethods.filter(method => !STANDARD_PAYMENT_METHODS.includes(method))
+  ];
+}

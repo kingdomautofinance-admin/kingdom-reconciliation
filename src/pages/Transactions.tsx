@@ -8,7 +8,7 @@ import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Eye, Search, CheckCircle2, Loader2, Link2, Link2Off, Calendar, Trash2, Pencil } from 'lucide-react';
+import { Eye, Search, CheckCircle2, Loader2, Link2, Link2Off, Calendar, Trash2, Pencil, ChevronDown } from 'lucide-react';
 import { SortableHeader } from '@/components/ui/SortableHeader';
 import { type SortConfig, getNextSortState } from '@/lib/sorting';
 import {
@@ -19,7 +19,7 @@ import {
   formatISODateToUS,
 } from '@/lib/utils';
 import { autoReconcileAll } from '@/lib/reconciliation';
-import { fetchPreferredMinTransactionDate } from '@/lib/transactionFilters';
+import { fetchPreferredMinTransactionDate, fetchPaymentMethods } from '@/lib/transactionFilters';
 import { DeleteTransactionModal } from '@/components/DeleteTransactionModal';
 import { EditTransactionModal } from '@/components/EditTransactionModal';
 import { UnreconcileTransactionModal } from '@/components/UnreconcileTransactionModal';
@@ -58,6 +58,7 @@ export default function Transactions() {
   const [searchTerm, setSearchTerm] = useState('');
   const [sortConfig, setSortConfig] = useState<SortConfig<TransactionSortColumn>>({ column: 'date', direction: 'desc' });
   const [statusFilter, setStatusFilter] = useState<ReconciliationStatus | 'all' | 'deleted'>('all');
+  const [methodFilter, setMethodFilter] = useState('');
   const [selectedForMatch, setSelectedForMatch] = useState<Transaction | null>(null);
   const [dateFrom, setDateFrom] = useState(urlParams.dateFrom);
   const [dateTo, setDateTo] = useState(urlParams.dateTo);
@@ -98,46 +99,53 @@ export default function Transactions() {
   const pendingIsoDateTo = useMemo(() => normalizeDateInput(dateTo), [dateTo]);
 
   const [appliedSearchTerm, setAppliedSearchTerm] = useState('');
-  const [appliedIsoDateFrom, setAppliedIsoDateFrom] = useState<string | undefined>(undefined);
-  const [appliedIsoDateTo, setAppliedIsoDateTo] = useState<string | undefined>(undefined);
+  const [appliedMethodFilter, setAppliedMethodFilter] = useState('');
+  const [appliedIsoDateFrom, setAppliedIsoDateFrom] = useState<string | undefined>(normalizeDateInput(urlParams.dateFrom));
+  const [appliedIsoDateTo, setAppliedIsoDateTo] = useState<string | undefined>(normalizeDateInput(urlParams.dateTo));
 
   const filtersChanged =
     normalizedSearchInput !== appliedSearchTerm ||
+    methodFilter !== appliedMethodFilter ||
     pendingIsoDateFrom !== appliedIsoDateFrom ||
     pendingIsoDateTo !== appliedIsoDateTo;
 
-  const hasActiveFilters = Boolean(appliedSearchTerm || appliedIsoDateFrom || appliedIsoDateTo);
+  const hasActiveFilters = filtersChanged;
 
-  // Auto-apply filters if URL parameters are present (e.g., from calendar click)
+  // Sync state with URL params on mount
   useEffect(() => {
-    if (urlParams.dateFrom || urlParams.dateTo) {
-      // Update visible input fields
+    if (urlParams.dateFrom || urlParams.dateTo || urlParams.search) {
+      setSearchTerm(urlParams.search);
       setDateFrom(urlParams.dateFrom);
       setDateTo(urlParams.dateTo);
-      // Apply the filters
+      
+      // Update visible input fields
+      if (dateFromPickerRef.current) {
+        dateFromPickerRef.current.value = normalizeDateInput(urlParams.dateFrom) || '';
+      }
+      if (dateToPickerRef.current) {
+        dateToPickerRef.current.value = normalizeDateInput(urlParams.dateTo) || '';
+      }
+
+      setAppliedSearchTerm(urlParams.search.trim());
       setAppliedIsoDateFrom(normalizeDateInput(urlParams.dateFrom));
       setAppliedIsoDateTo(normalizeDateInput(urlParams.dateTo));
     }
-  }, [urlParams.dateFrom, urlParams.dateTo]);
-
-  useEffect(() => {
-    if (urlParams.search) {
-      setSearchTerm(urlParams.search);
-      setAppliedSearchTerm(urlParams.search.trim());
-    }
-  }, [urlParams.search]);
+  }, [urlParams]);
 
   const handleApplyFilters = () => {
     setAppliedSearchTerm(normalizedSearchInput);
+    setAppliedMethodFilter(methodFilter);
     setAppliedIsoDateFrom(pendingIsoDateFrom);
     setAppliedIsoDateTo(pendingIsoDateTo);
   };
 
   const handleClearFilters = () => {
     setSearchTerm('');
+    setMethodFilter('');
     setDateFrom('');
     setDateTo('');
     setAppliedSearchTerm('');
+    setAppliedMethodFilter('');
     setAppliedIsoDateFrom(undefined);
     setAppliedIsoDateTo(undefined);
   };
@@ -156,6 +164,12 @@ export default function Transactions() {
   } = useQuery({
     queryKey: ['preferred-min-transaction-date'],
     queryFn: fetchPreferredMinTransactionDate,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const { data: paymentMethods = [] } = useQuery({
+    queryKey: ['payment-methods'],
+    queryFn: fetchPaymentMethods,
     staleTime: 5 * 60 * 1000,
   });
 
@@ -181,7 +195,7 @@ export default function Transactions() {
     isFetchingNextPage,
     isLoading,
   } = useInfiniteQuery<Transaction[]>({
-    queryKey: ['transactions', 'infinite', statusFilter, appliedSearchTerm, effectiveStartDate ?? null, appliedIsoDateTo ?? null, minDate ?? null, sortConfig.column, sortConfig.direction],
+    queryKey: ['transactions', 'infinite', statusFilter, appliedSearchTerm, appliedMethodFilter, effectiveStartDate ?? null, appliedIsoDateTo ?? null, minDate ?? null, sortConfig.column, sortConfig.direction],
     queryFn: async ({ pageParam = 0 }) => {
       const start = pageParam as number;
       const end = start + TRANSACTIONS_PER_PAGE - 1;
@@ -205,6 +219,10 @@ export default function Transactions() {
       }
       if (effectiveEndExclusive) {
         query = query.lt('date', effectiveEndExclusive);
+      }
+
+      if (appliedMethodFilter) {
+        query = query.eq('payment_method', appliedMethodFilter);
       }
 
       if (appliedSearchTerm) {
@@ -718,6 +736,22 @@ export default function Transactions() {
 
         <div className="flex gap-2">
           <div className="relative">
+            <select
+              value={methodFilter}
+              onChange={(e) => setMethodFilter(e.target.value)}
+              className="flex h-10 w-[180px] rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 appearance-none pr-8 truncate"
+            >
+              <option value="">All Methods</option>
+              {paymentMethods.map((method: string) => (
+                <option key={method} value={method}>
+                  {method}
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground opacity-50" />
+          </div>
+
+          <div className="relative">
             <Calendar className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
               type="text"
@@ -788,7 +822,7 @@ export default function Transactions() {
           <Button
             variant="outline"
             onClick={handleClearFilters}
-            disabled={!hasActiveFilters && searchTerm === '' && dateFrom === '' && dateTo === ''}
+            disabled={!hasActiveFilters && searchTerm === '' && dateFrom === '' && dateTo === '' && methodFilter === ''}
             size="sm"
           >
             Clear
