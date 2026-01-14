@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
 import { useState, useRef, useMemo, useEffect, type RefObject } from 'react';
-import { useLocation } from 'wouter';
+import { useLocation, useSearch } from 'wouter';
 import { supabase } from '@/lib/supabase';
 import type { Transaction, ReconciliationStatus } from '@/lib/database.types';
 import { queryClient } from '@/lib/queryClient';
@@ -39,16 +39,17 @@ const buildAmountCondition = (rawTerm: string) => {
 export default function Transactions() {
   const { showToast } = useToast();
   const [location] = useLocation();
-  
+  const searchString = useSearch();
+
   // Parse URL query parameters for date filtering
   const urlParams = useMemo(() => {
-    const params = new URLSearchParams(location.split('?')[1] || '');
+    const params = new URLSearchParams(searchString);
     return {
       dateFrom: params.get('dateFrom') || '',
       dateTo: params.get('dateTo') || '',
       search: params.get('q') || '',
     };
-  }, [location]);
+  }, [searchString]);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<ReconciliationStatus | 'all' | 'deleted'>('all');
