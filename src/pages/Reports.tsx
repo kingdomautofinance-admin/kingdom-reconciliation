@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Calendar, TrendingUp, CheckCircle2, Clock } from 'lucide-react';
 import { SortableHeader } from '@/components/ui/SortableHeader';
 import { type SortConfig, getNextSortState } from '@/lib/sorting';
-import { parseUSDateToISO, formatUSDateInput, formatISODateToUS } from '@/lib/utils';
+import { parseUSDateToISO, formatUSDateInput, formatISODateToUS, formatCurrency, formatDate } from '@/lib/utils';
 import { getMonthDateRange, getYearDateRange, formatMonthYear } from '@/lib/calendar-utils';
 import { DateSummaryCard, type DateSummary } from '@/components/reports/DateSummaryCard';
 import { ReportViewToggle, type ViewType } from '@/components/reports/ReportViewToggle';
@@ -16,6 +16,8 @@ import { MonthlyCalendarView } from '@/components/reports/MonthlyCalendarView';
 import { YearlyCalendarView } from '@/components/reports/YearlyCalendarView';
 
 type ReportSortColumn = 'date' | 'reconciled_count' | 'pending_count' | 'total_count' | 'reconciliation_percentage';
+
+const GRID_COLS = "grid-cols-[120px_1fr_1fr_1fr_80px]";
 
 export default function Reports() {
   const [, setLocation] = useLocation();
@@ -406,37 +408,55 @@ export default function Reports() {
 
       {/* List View */}
       {view === 'list' && (
-        <div className="space-y-3">
-          {/* Header row - visible on medium screens and above */}
-          <Card className="hidden md:block p-4">
-            <div className="flex items-center gap-4 text-xs font-semibold">
-              <div className="w-12" />
-              <SortableHeader label="Date" column="date" currentSort={sortConfig} onSort={handleSort} className="w-32" />
-              <SortableHeader label="Reconciled" column="reconciled_count" currentSort={sortConfig} onSort={handleSort} className="flex-1 min-w-[120px]" />
-              <SortableHeader label="Pending" column="pending_count" currentSort={sortConfig} onSort={handleSort} className="flex-1 min-w-[120px]" />
-              <SortableHeader label="Total" column="total_count" currentSort={sortConfig} onSort={handleSort} className="flex-1 min-w-[120px]" />
-              <SortableHeader label="%" column="reconciliation_percentage" currentSort={sortConfig} onSort={handleSort} className="w-20" />
-              <div className="w-5" />
-            </div>
-          </Card>
+        <Card className="overflow-hidden">
+          <div className={`grid ${GRID_COLS} gap-4 p-4 text-xs font-semibold border-b bg-muted/40 items-center`}>
+            <SortableHeader label="Date" column="date" currentSort={sortConfig} onSort={handleSort} />
+            <SortableHeader label="Reconciled" column="reconciled_count" currentSort={sortConfig} onSort={handleSort} />
+            <SortableHeader label="Pending" column="pending_count" currentSort={sortConfig} onSort={handleSort} />
+            <SortableHeader label="Total" column="total_count" currentSort={sortConfig} onSort={handleSort} />
+            <SortableHeader label="%" column="reconciliation_percentage" currentSort={sortConfig} onSort={handleSort} />
+          </div>
 
-          {sortedSummaries.length === 0 ? (
-            <Card className="p-8">
-              <div className="text-center text-muted-foreground">
+          <div className="divide-y">
+            {sortedSummaries.length === 0 ? (
+              <div className="p-8 text-center text-muted-foreground">
                 <Clock className="h-12 w-12 mx-auto mb-2 opacity-50" />
                 <p>No transactions found in the selected date range</p>
               </div>
-            </Card>
-          ) : (
-            sortedSummaries.map((summary) => (
-              <DateSummaryCard
-                key={summary.date}
-                summary={summary}
-                onClick={() => handleDateClick(summary.date)}
-              />
-            ))
-          )}
-        </div>
+            ) : (
+              sortedSummaries.map((summary) => (
+                <div
+                  key={summary.date}
+                  className={`grid ${GRID_COLS} gap-4 p-4 items-center text-sm hover:bg-muted/50 transition-colors cursor-pointer`}
+                  onClick={() => handleDateClick(summary.date)}
+                >
+                  <div className="font-medium">{formatDate(summary.date)}</div>
+                  <div>
+                    <span className="font-medium text-green-600 dark:text-green-400">{summary.reconciled_count}</span>
+                    <span className="text-muted-foreground text-xs ml-2">{formatCurrency(summary.reconciled_amount)}</span>
+                  </div>
+                  <div>
+                    <span className="font-medium">{summary.pending_count}</span>
+                    <span className="text-muted-foreground text-xs ml-2">{formatCurrency(summary.pending_amount)}</span>
+                  </div>
+                  <div>
+                    <span className="font-medium">{summary.total_count}</span>
+                    <span className="text-muted-foreground text-xs ml-2">{formatCurrency(summary.total_amount)}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className={`font-bold ${
+                      summary.reconciliation_percentage === 100 ? 'text-green-600' :
+                      summary.reconciliation_percentage >= 80 ? 'text-yellow-600' :
+                      'text-orange-600'
+                    }`}>
+                      {summary.reconciliation_percentage}%
+                    </span>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </Card>
       )}
 
       {/* Monthly Calendar View */}

@@ -23,6 +23,7 @@ import { EditTransactionModal } from '@/components/EditTransactionModal';
 import { useToast } from '@/components/ui/toast';
 
 const TRANSACTIONS_PER_PAGE = 50;
+const GRID_COLS = "grid-cols-[100px_1fr_100px_100px_100px_100px_80px_140px]";
 
 const escapeForIlike = (term: string) =>
   term.replace(/([*\\])/g, '\\$1').replace(/,/g, '\\,').replace(/_/g, '\\_').replace(/%/g, '\\%');
@@ -750,34 +751,47 @@ export default function KingdomTransactions() {
         }
       />
 
-      <div className="space-y-2">
-        {filteredTransactions.map((transaction) => (
-          <TransactionCard
-            key={transaction.id}
-            transaction={transaction}
-            selectedForMatch={selectedForMatch}
-            onSelectForMatch={setSelectedForMatch}
-            onManualMatch={(t2) => manualReconcileMutation.mutate({ transaction1: selectedForMatch!, transaction2: t2 })}
-            isMatchInProgress={manualReconcileMutation.isPending}
-            allTransactions={filteredTransactions}
-            onDelete={(t) => {
-              setSelectedTransaction(t);
-              setDeleteModalMode('delete');
-              setDeleteModalOpen(true);
-            }}
-            onViewDeleteReason={(t) => {
-              setSelectedTransaction(t);
-              setDeleteModalMode('view');
-              setDeleteModalOpen(true);
-            }}
-            onEdit={(t) => {
-              setTransactionToEdit(t);
-              setEditModalOpen(true);
-            }}
-            statusFilter={statusFilter}
-          />
-        ))}
-      </div>
+      <Card className="overflow-hidden">
+        <div className={`grid ${GRID_COLS} gap-3 border-b px-4 py-3 text-xs font-semibold items-center bg-muted/40`}>
+          <div>Date</div>
+          <div>Client / Depositor</div>
+          <div>Car</div>
+          <div>Method</div>
+          <div>Amount</div>
+          <div>Status</div>
+          <div>Confidence</div>
+          <div className="text-right px-2">Actions</div>
+        </div>
+
+        <div className="divide-y">
+          {filteredTransactions.map((transaction) => (
+            <TransactionRow
+              key={transaction.id}
+              transaction={transaction}
+              selectedForMatch={selectedForMatch}
+              onSelectForMatch={setSelectedForMatch}
+              onManualMatch={(t2) => manualReconcileMutation.mutate({ transaction1: selectedForMatch!, transaction2: t2 })}
+              isMatchInProgress={manualReconcileMutation.isPending}
+              allTransactions={filteredTransactions}
+              onDelete={(t) => {
+                setSelectedTransaction(t);
+                setDeleteModalMode('delete');
+                setDeleteModalOpen(true);
+              }}
+              onViewDeleteReason={(t) => {
+                setSelectedTransaction(t);
+                setDeleteModalMode('view');
+                setDeleteModalOpen(true);
+              }}
+              onEdit={(t) => {
+                setTransactionToEdit(t);
+                setEditModalOpen(true);
+              }}
+              statusFilter={statusFilter}
+            />
+          ))}
+        </div>
+      </Card>
 
       <div ref={observerTarget} className="py-4 text-center space-y-1">
         {isFetchingNextPage && (
@@ -794,7 +808,7 @@ export default function KingdomTransactions() {
   );
 }
 
-function TransactionCard({
+function TransactionRow({
   transaction,
   selectedForMatch,
   onSelectForMatch,
@@ -850,147 +864,146 @@ function TransactionCard({
   };
 
   // Apply 50% opacity to deleted transactions when viewing "All"
-  const cardOpacity = transaction.is_deleted && statusFilter === 'all' ? 'opacity-50' : '';
+  const deletedTextStyle = transaction.is_deleted && statusFilter === 'all' ? 'opacity-50' : '';
 
   return (
-    <Card className={`p-4 ${cardOpacity}`}>
-      <div className="space-y-3">
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-          <div className="flex-1 w-full grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-4">
-            <div>
-              <div className="text-xs text-muted-foreground">Date</div>
-              <div className="font-medium text-xs">{formatDate(transaction.date)}</div>
-            </div>
-
-            <div>
-              <div className="text-xs text-muted-foreground">Client / Depositor</div>
-              {transaction.name && (
-                <div className="font-medium text-xs truncate" title={`Client: ${transaction.name}`}>
-                  {transaction.name}
-                </div>
-              )}
-              {transaction.depositor && (
-                <div
-                  className={`${transaction.name ? 'text-xs text-muted-foreground' : 'font-medium text-xs'} truncate`}
-                  title={`Depositor: ${transaction.depositor}`}
-                >
-                  {transaction.depositor}
-                </div>
-              )}
-              {!transaction.name && !transaction.depositor && (
-                <div className="font-medium text-xs">-</div>
-              )}
-            </div>
-
-            <div>
-              <div className="text-xs text-muted-foreground">Car</div>
-              <div className="font-medium text-xs">{transaction.car || '-'}</div>
-            </div>
-
-            <div>
-              <div className="text-xs text-muted-foreground">Method</div>
-              <div className="font-medium text-xs">{transaction.payment_method || '-'}</div>
-            </div>
-
-            <div>
-              <div className="text-xs text-muted-foreground">Amount</div>
-              <div className="font-medium text-xs">{formatCurrency(transaction.value)}</div>
-            </div>
-
-            <div>
-              <div className="text-xs text-muted-foreground">Status</div>
-              <Badge className={statusColors[transaction.status as keyof typeof statusColors]}>
-                {transaction.status}
-              </Badge>
-            </div>
-
-            <div>
-              <div className="text-xs text-muted-foreground">Confidence</div>
-              {transaction.status === 'reconciled' && transaction.confidence !== null ? (
-                <Badge className={getConfidenceColor(transaction.confidence)}>
-                  {transaction.confidence}%
-                </Badge>
-              ) : (
-                <div className="font-medium text-xs text-muted-foreground">-</div>
-              )}
-            </div>
-          </div>
-
-          <div className="flex gap-2">
-            {!transaction.is_deleted && transaction.status !== 'reconciled' && (
-              <Button
-                size="icon"
-                variant={selectedForMatch?.id === transaction.id ? 'default' : 'outline'}
-                onClick={() => {
-                  if (selectedForMatch?.id === transaction.id) {
-                    onSelectForMatch(null);
-                  } else if (selectedForMatch) {
-                    onManualMatch(transaction);
-                  } else {
-                    onSelectForMatch(transaction);
-                  }
-                }}
-                disabled={isMatchInProgress || (selectedForMatch !== null && selectedForMatch.id !== transaction.id && (selectedForMatch.source === transaction.source))}
-                title={selectedForMatch?.id === transaction.id ? 'Cancel selection' : selectedForMatch ? 'Match with selected' : 'Select for matching'}
-                aria-label={selectedForMatch?.id === transaction.id ? 'Cancel selection' : selectedForMatch ? 'Match with selected' : 'Select for matching'}
-              >
-                {isMatchInProgress && selectedForMatch?.id === transaction.id ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Link2 className="h-4 w-4" />
-                )}
-              </Button>
-            )}
-            {!transaction.is_deleted && transaction.status === 'reconciled' && (
-              <Button
-                size="icon"
-                variant="ghost"
-                onClick={() => setShowMatch(!showMatch)}
-                title="View matched transaction"
-                aria-label="View matched transaction"
-              >
-                <Eye className="h-4 w-4" />
-              </Button>
-            )}
-            {transaction.is_deleted && (
-              <Button
-                size="icon"
-                variant="ghost"
-                onClick={() => onViewDeleteReason(transaction)}
-                title="View deletion reason and restore"
-                aria-label="View deletion reason and restore"
-              >
-                <Eye className="h-4 w-4" />
-              </Button>
-            )}
-            {!transaction.is_deleted && transaction.status !== 'reconciled' && (
-              <>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  onClick={() => onEdit(transaction)}
-                  title="Edit transaction"
-                  aria-label="Edit transaction"
-                >
-                  <Pencil className="h-4 w-4" />
-                </Button>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  onClick={() => onDelete(transaction)}
-                  title="Delete transaction"
-                  aria-label="Delete transaction"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </>
-            )}
-          </div>
+    <div className={`group hover:bg-muted/50 transition-colors ${deletedTextStyle}`}>
+      <div className={`grid ${GRID_COLS} gap-3 px-4 py-3 items-center text-sm`}>
+        {/* Date */}
+        <div>
+          <div className="font-medium text-xs">{formatDate(transaction.date)}</div>
         </div>
 
-        {showMatch && matchedTransaction && (
-          <div className="ml-8 pl-4 border-l-2 border-gray-200 dark:border-gray-700">
-            <div className="text-sm font-medium text-muted-foreground mb-2">
+        {/* Client / Depositor */}
+        <div className="min-w-0">
+          {transaction.name && (
+            <div className="font-medium text-xs truncate" title={`Client: ${transaction.name}`}>
+              {transaction.name}
+            </div>
+          )}
+          {transaction.depositor && (
+            <div
+              className={`${transaction.name ? 'text-xs text-muted-foreground' : 'font-medium text-xs'} truncate`}
+              title={`Depositor: ${transaction.depositor}`}
+            >
+              {transaction.depositor}
+            </div>
+          )}
+          {!transaction.name && !transaction.depositor && (
+            <div className="font-medium text-xs">-</div>
+          )}
+        </div>
+
+        {/* Car */}
+        <div>
+          <div className="font-medium text-xs truncate">{transaction.car || '-'}</div>
+        </div>
+
+        {/* Method */}
+        <div>
+          <div className="font-medium text-xs truncate">{transaction.payment_method || '-'}</div>
+        </div>
+
+        {/* Amount */}
+        <div>
+          <div className="font-medium text-xs">{formatCurrency(transaction.value)}</div>
+        </div>
+
+        {/* Status */}
+        <div>
+          <Badge className={statusColors[transaction.status as keyof typeof statusColors]}>
+            {transaction.status}
+          </Badge>
+        </div>
+
+        {/* Confidence */}
+        <div>
+          {transaction.status === 'reconciled' && transaction.confidence !== null ? (
+            <Badge className={getConfidenceColor(transaction.confidence)}>
+              {transaction.confidence}%
+            </Badge>
+          ) : (
+            <div className="font-medium text-xs text-muted-foreground">-</div>
+          )}
+        </div>
+
+        {/* Actions */}
+        <div className="flex items-center justify-end gap-1">
+          {!transaction.is_deleted && transaction.status !== 'reconciled' && (
+            <Button
+              size="icon"
+              variant={selectedForMatch?.id === transaction.id ? 'default' : 'ghost'}
+              className="h-8 w-8"
+              onClick={() => {
+                if (selectedForMatch?.id === transaction.id) {
+                  onSelectForMatch(null);
+                } else if (selectedForMatch) {
+                  onManualMatch(transaction);
+                } else {
+                  onSelectForMatch(transaction);
+                }
+              }}
+              disabled={isMatchInProgress || (selectedForMatch !== null && selectedForMatch.id !== transaction.id && (selectedForMatch.source === transaction.source))}
+              title={selectedForMatch?.id === transaction.id ? 'Cancel selection' : selectedForMatch ? 'Match with selected' : 'Select for matching'}
+            >
+              {isMatchInProgress && selectedForMatch?.id === transaction.id ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Link2 className="h-4 w-4" />
+              )}
+            </Button>
+          )}
+          {!transaction.is_deleted && transaction.status === 'reconciled' && (
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-8 w-8"
+              onClick={() => setShowMatch(!showMatch)}
+              title="View matched transaction"
+            >
+              <Eye className="h-4 w-4" />
+            </Button>
+          )}
+          {transaction.is_deleted && (
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-8 w-8"
+              onClick={() => onViewDeleteReason(transaction)}
+              title="View deletion reason and restore"
+            >
+              <Eye className="h-4 w-4" />
+            </Button>
+          )}
+          {!transaction.is_deleted && transaction.status !== 'reconciled' && (
+            <>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-8 w-8"
+                onClick={() => onEdit(transaction)}
+                title="Edit transaction"
+              >
+                <Pencil className="h-4 w-4" />
+              </Button>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-8 w-8"
+                onClick={() => onDelete(transaction)}
+                title="Delete transaction"
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            </>
+          )}
+        </div>
+      </div>
+
+      {showMatch && matchedTransaction && (
+        <div className="px-4 pb-4 bg-muted/30 border-t">
+          <div className="py-3 px-4 mt-2 bg-background rounded-md border">
+            <div className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">
               Matched Transaction ({transaction.confidence}% confidence)
             </div>
             <div className="grid grid-cols-5 gap-4 text-sm">
@@ -1031,8 +1044,8 @@ function TransactionCard({
               </div>
             </div>
           </div>
-        )}
-      </div>
-    </Card>
+        </div>
+      )}
+    </div>
   );
 }

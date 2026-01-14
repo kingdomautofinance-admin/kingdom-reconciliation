@@ -26,6 +26,7 @@ import { UnreconcileTransactionModal } from '@/components/UnreconcileTransaction
 import { useToast } from '@/components/ui/toast';
 
 const TRANSACTIONS_PER_PAGE = 50;
+const GRID_COLS = "grid-cols-[100px_1fr_100px_100px_100px_100px_80px_140px]";
 
 type TransactionSortColumn = 'date' | 'name' | 'car' | 'payment_method' | 'value' | 'status' | 'confidence';
 
@@ -975,9 +976,8 @@ export default function Transactions() {
         transaction={transactionToUnreconcile}
       />
 
-      {/* Header row - visible on large screens */}
-      <Card className="hidden lg:block p-3 mb-2">
-        <div className="grid grid-cols-7 gap-4 text-xs font-semibold">
+      <Card className="overflow-hidden">
+        <div className={`grid ${GRID_COLS} gap-3 border-b px-4 py-3 text-xs font-semibold items-center bg-muted/40`}>
           <SortableHeader label="Date" column="date" currentSort={sortConfig} onSort={handleSort} />
           <SortableHeader label="Client / Depositor" column="name" currentSort={sortConfig} onSort={handleSort} />
           <SortableHeader label="Car" column="car" currentSort={sortConfig} onSort={handleSort} />
@@ -985,41 +985,42 @@ export default function Transactions() {
           <SortableHeader label="Amount" column="value" currentSort={sortConfig} onSort={handleSort} />
           <SortableHeader label="Status" column="status" currentSort={sortConfig} onSort={handleSort} />
           <SortableHeader label="Confidence" column="confidence" currentSort={sortConfig} onSort={handleSort} />
+          <div className="text-right px-2">Actions</div>
+        </div>
+
+        <div className="divide-y">
+          {filteredTransactions.map((transaction) => (
+            <TransactionRow
+              key={transaction.id}
+              transaction={transaction}
+              selectedForMatch={selectedForMatch}
+              onSelectForMatch={setSelectedForMatch}
+              onManualMatch={(t2) => manualReconcileMutation.mutate({ transaction1: selectedForMatch!, transaction2: t2 })}
+              isMatchInProgress={manualReconcileMutation.isPending}
+              allTransactions={filteredTransactions}
+              onDelete={(t) => {
+                setSelectedTransaction(t);
+                setDeleteModalMode('delete');
+                setDeleteModalOpen(true);
+              }}
+              onViewDeleteReason={(t) => {
+                setSelectedTransaction(t);
+                setDeleteModalMode('view');
+                setDeleteModalOpen(true);
+              }}
+              onEdit={(t) => {
+                setTransactionToEdit(t);
+                setEditModalOpen(true);
+              }}
+              onUnreconcile={(t) => {
+                setTransactionToUnreconcile(t);
+                setUnreconcileModalOpen(true);
+              }}
+              statusFilter={statusFilter}
+            />
+          ))}
         </div>
       </Card>
-
-      <div className="space-y-2">
-        {filteredTransactions.map((transaction) => (
-          <TransactionCard
-            key={transaction.id}
-            transaction={transaction}
-            selectedForMatch={selectedForMatch}
-            onSelectForMatch={setSelectedForMatch}
-            onManualMatch={(t2) => manualReconcileMutation.mutate({ transaction1: selectedForMatch!, transaction2: t2 })}
-            isMatchInProgress={manualReconcileMutation.isPending}
-            allTransactions={filteredTransactions}
-            onDelete={(t) => {
-              setSelectedTransaction(t);
-              setDeleteModalMode('delete');
-              setDeleteModalOpen(true);
-            }}
-            onViewDeleteReason={(t) => {
-              setSelectedTransaction(t);
-              setDeleteModalMode('view');
-              setDeleteModalOpen(true);
-            }}
-            onEdit={(t) => {
-              setTransactionToEdit(t);
-              setEditModalOpen(true);
-            }}
-            onUnreconcile={(t) => {
-              setTransactionToUnreconcile(t);
-              setUnreconcileModalOpen(true);
-            }}
-            statusFilter={statusFilter}
-          />
-        ))}
-      </div>
 
       <div ref={observerTarget} className="py-4 text-center space-y-1">
         {isFetchingNextPage && (
@@ -1036,7 +1037,7 @@ export default function Transactions() {
   );
 }
 
-function TransactionCard({
+function TransactionRow({
   transaction,
   selectedForMatch,
   onSelectForMatch,
@@ -1110,201 +1111,189 @@ function TransactionCard({
   const deletedTextStyle = transaction.is_deleted && statusFilter === 'all' ? 'opacity-60' : '';
 
   return (
-    <Card className="p-4">
-      <div className={`space-y-3 ${deletedTextStyle}`}>
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-          <div className="flex-1 w-full grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-4">
-            <div>
-              <div className="text-xs text-muted-foreground">Date</div>
-              <div className="font-medium text-xs">{formatDate(transaction.date)}</div>
-            </div>
+    <div className={`group hover:bg-muted/50 transition-colors ${deletedTextStyle}`}>
+      <div className={`grid ${GRID_COLS} gap-3 px-4 py-3 items-center text-sm`}>
+        {/* Date */}
+        <div>
+          <div className="font-medium text-xs">{formatDate(transaction.date)}</div>
+        </div>
 
-            <div>
-              <div className="text-xs text-muted-foreground">Client / Depositor</div>
-              {transaction.name && (
-                <div className="font-medium text-xs truncate" title={`Client: ${transaction.name}`}>
-                  {transaction.name}
-                </div>
-              )}
-              {transaction.depositor && (
-                <div
-                  className={`${transaction.name ? 'text-xs text-muted-foreground' : 'font-medium text-xs'} truncate`}
-                  title={`Depositor: ${transaction.depositor}`}
-                >
-                  {transaction.depositor}
-                </div>
-              )}
-              {!transaction.name && !transaction.depositor && (
-                <div className="font-medium text-xs">-</div>
-              )}
+        {/* Client / Depositor */}
+        <div className="min-w-0">
+          {transaction.name && (
+            <div className="font-medium text-xs truncate" title={`Client: ${transaction.name}`}>
+              {transaction.name}
             </div>
-
-            <div>
-              <div className="text-xs text-muted-foreground">Car</div>
-              <div className="font-medium text-xs">{transaction.car || '-'}</div>
+          )}
+          {transaction.depositor && (
+            <div
+              className={`${transaction.name ? 'text-xs text-muted-foreground' : 'font-medium text-xs'} truncate`}
+              title={`Depositor: ${transaction.depositor}`}
+            >
+              {transaction.depositor}
             </div>
+          )}
+          {!transaction.name && !transaction.depositor && (
+            <div className="font-medium text-xs">-</div>
+          )}
+        </div>
 
-            <div>
-              <div className="text-xs text-muted-foreground">Method</div>
-              <div className="font-medium text-xs">{transaction.payment_method || '-'}</div>
-            </div>
+        {/* Car */}
+        <div>
+          <div className="font-medium text-xs truncate">{transaction.car || '-'}</div>
+        </div>
 
-            <div>
-              <div className="text-xs text-muted-foreground">Amount</div>
-              <div className="font-medium text-xs">{formatCurrency(transaction.value)}</div>
-            </div>
+        {/* Method */}
+        <div>
+          <div className="font-medium text-xs truncate">{transaction.payment_method || '-'}</div>
+        </div>
 
-            <div>
-              <div className="text-xs text-muted-foreground">Status</div>
-              <Badge className={statusColors[transaction.status as keyof typeof statusColors]}>
-                {getStatusLabel(transaction.status)}
-              </Badge>
-            </div>
+        {/* Amount */}
+        <div>
+          <div className="font-medium text-xs">{formatCurrency(transaction.value)}</div>
+        </div>
 
-            <div>
-              <div className="text-xs text-muted-foreground">Confidence</div>
-              {transaction.status === 'reconciled' && transaction.confidence !== null ? (
-                <Badge className={getConfidenceColor(transaction.confidence)}>
-                  {transaction.confidence}%
-                </Badge>
+        {/* Status */}
+        <div>
+          <Badge className={statusColors[transaction.status as keyof typeof statusColors]}>
+            {getStatusLabel(transaction.status)}
+          </Badge>
+        </div>
+
+        {/* Confidence */}
+        <div>
+          {transaction.status === 'reconciled' && transaction.confidence !== null ? (
+            <Badge className={getConfidenceColor(transaction.confidence)}>
+              {transaction.confidence}%
+            </Badge>
+          ) : (
+            <div className="font-medium text-xs text-muted-foreground">-</div>
+          )}
+        </div>
+
+        {/* Actions */}
+        <div className="flex items-center justify-end gap-1">
+          {!transaction.is_deleted && transaction.status !== 'reconciled' && (
+            <Button
+              size="icon"
+              variant={selectedForMatch?.id === transaction.id ? 'default' : 'ghost'}
+              className="h-8 w-8"
+              onClick={() => {
+                if (selectedForMatch?.id === transaction.id) {
+                  onSelectForMatch(null);
+                } else if (selectedForMatch) {
+                  onManualMatch(transaction);
+                } else {
+                  onSelectForMatch(transaction);
+                }
+              }}
+              disabled={isMatchInProgress || (selectedForMatch !== null && selectedForMatch.id !== transaction.id && (selectedForMatch.source === transaction.source))}
+              title={selectedForMatch?.id === transaction.id ? 'Cancel selection' : selectedForMatch ? 'Match with selected' : 'Select for matching'}
+            >
+              {isMatchInProgress && selectedForMatch?.id === transaction.id ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
-                <div className="font-medium text-xs text-muted-foreground">-</div>
+                <Link2 className="h-4 w-4" />
               )}
-            </div>
-          </div>
-
-          <div className="flex gap-2">
-            {!transaction.is_deleted && transaction.status !== 'reconciled' && (
-              <Button
-                size="icon"
-                variant={selectedForMatch?.id === transaction.id ? 'default' : 'outline'}
-                className="h-10 w-10"
-                onClick={() => {
-                  if (selectedForMatch?.id === transaction.id) {
-                    onSelectForMatch(null);
-                  } else if (selectedForMatch) {
-                    onManualMatch(transaction);
-                  } else {
-                    onSelectForMatch(transaction);
-                  }
-                }}
-                disabled={isMatchInProgress || (selectedForMatch !== null && selectedForMatch.id !== transaction.id && (selectedForMatch.source === transaction.source))}
-                title={selectedForMatch?.id === transaction.id ? 'Cancel selection' : selectedForMatch ? 'Match with selected' : 'Select for matching'}
-                aria-label={selectedForMatch?.id === transaction.id ? 'Cancel selection' : selectedForMatch ? 'Match with selected' : 'Select for matching'}
-              >
-                {isMatchInProgress && selectedForMatch?.id === transaction.id ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Link2 className="h-4 w-4" />
-                )}
-              </Button>
-            )}
-            {!transaction.is_deleted && transaction.status === 'reconciled' && (
-              <>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  onClick={() => setShowMatch(!showMatch)}
-                  title="View matched transaction"
-                  aria-label="View matched transaction"
-                >
-                  <Eye className="h-4 w-4" />
-                </Button>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="h-10 w-10"
-                  onClick={() => onUnreconcile(transaction)}
-                  title="Unreconcile transaction"
-                  aria-label="Unreconcile transaction"
-                >
-                  <Link2Off className="h-4 w-4 text-destructive" />
-                </Button>
-              </>
-            )}
-            {transaction.is_deleted && (
+            </Button>
+          )}
+          {!transaction.is_deleted && transaction.status === 'reconciled' && (
+            <>
               <Button
                 size="icon"
                 variant="ghost"
-                onClick={() => onViewDeleteReason(transaction)}
-                title="View deletion reason and restore"
-                aria-label="View deletion reason and restore"
+                className="h-8 w-8"
+                onClick={() => setShowMatch(!showMatch)}
+                title="View matched transaction"
               >
                 <Eye className="h-4 w-4" />
               </Button>
-            )}
-            {!transaction.is_deleted && transaction.status !== 'reconciled' && (
-              <>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="h-10 w-10"
-                  onClick={() => onEdit(transaction)}
-                  title="Edit transaction"
-                  aria-label="Edit transaction"
-                >
-                  <Pencil className="h-4 w-4" />
-                </Button>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="h-10 w-10"
-                  onClick={() => onDelete(transaction)}
-                  title="Delete transaction"
-                  aria-label="Delete transaction"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </>
-            )}
-          </div>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-8 w-8 text-destructive hover:text-destructive"
+                onClick={() => onUnreconcile(transaction)}
+                title="Unreconcile transaction"
+              >
+                <Link2Off className="h-4 w-4" />
+              </Button>
+            </>
+          )}
+          {transaction.is_deleted && (
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-8 w-8"
+              onClick={() => onViewDeleteReason(transaction)}
+              title="View deletion reason and restore"
+            >
+              <Eye className="h-4 w-4" />
+            </Button>
+          )}
+          {!transaction.is_deleted && transaction.status !== 'reconciled' && (
+            <>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-8 w-8"
+                onClick={() => onEdit(transaction)}
+                title="Edit transaction"
+              >
+                <Pencil className="h-4 w-4" />
+              </Button>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-8 w-8"
+                onClick={() => onDelete(transaction)}
+                title="Delete transaction"
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            </>
+          )}
         </div>
+      </div>
 
-        {showMatch && matchedTransaction && (
-          <div className="ml-8 pl-4 border-l-2 border-gray-200 dark:border-gray-700">
-            <div className="text-sm font-medium text-muted-foreground mb-2">
+      {showMatch && matchedTransaction && (
+        <div className="px-4 pb-4 bg-muted/30 border-t">
+          <div className="py-3 px-4 mt-2 bg-background rounded-md border">
+            <div className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">
               Matched Transaction ({transaction.confidence}% confidence)
             </div>
-            <div className="grid grid-cols-5 gap-4 text-sm">
-              <div>
-                <div className="text-muted-foreground">Date</div>
-                <div>{formatDate(matchedTransaction.date)}</div>
-              </div>
-              <div>
-                <div className="text-muted-foreground">Client / Depositor</div>
+            <div className={`grid ${GRID_COLS} gap-3 text-sm`}>
+              <div className="text-xs">{formatDate(matchedTransaction.date)}</div>
+              
+              <div className="min-w-0">
                 {matchedTransaction.name && (
-                  <div className="truncate" title={`Client: ${matchedTransaction.name}`}>
+                  <div className="truncate text-xs" title={`Client: ${matchedTransaction.name}`}>
                     {matchedTransaction.name}
                   </div>
                 )}
                 {matchedTransaction.depositor && (
                   <div
-                    className={`${matchedTransaction.name ? 'text-xs text-muted-foreground' : ''} truncate`}
+                    className={`${matchedTransaction.name ? 'text-xs text-muted-foreground' : 'text-xs'} truncate`}
                     title={`Depositor: ${matchedTransaction.depositor}`}
                   >
                     {matchedTransaction.depositor}
                   </div>
                 )}
                 {!matchedTransaction.name && !matchedTransaction.depositor && (
-                  <div>-</div>
+                  <div className="text-xs">-</div>
                 )}
               </div>
-              <div>
-                <div className="text-muted-foreground">Car</div>
-                <div>{matchedTransaction.car || '-'}</div>
-              </div>
-              <div>
-                <div className="text-muted-foreground">Amount</div>
-                <div>{formatCurrency(matchedTransaction.value)}</div>
-              </div>
-              <div>
-                <div className="text-muted-foreground">Source</div>
-                <div className="truncate text-xs">{matchedTransaction.source}</div>
+
+              <div className="truncate text-xs">{matchedTransaction.car || '-'}</div>
+              <div className="truncate text-xs">{matchedTransaction.payment_method || '-'}</div>
+              <div className="text-xs">{formatCurrency(matchedTransaction.value)}</div>
+              
+              <div className="col-span-3 text-xs text-muted-foreground truncate flex items-center">
+                Source: {matchedTransaction.source}
               </div>
             </div>
           </div>
-        )}
-      </div>
-    </Card>
+        </div>
+      )}
+    </div>
   );
 }
