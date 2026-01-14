@@ -24,9 +24,11 @@ import { DeleteTransactionModal } from '@/components/DeleteTransactionModal';
 import { EditTransactionModal } from '@/components/EditTransactionModal';
 import { UnreconcileTransactionModal } from '@/components/UnreconcileTransactionModal';
 import { useToast } from '@/components/ui/toast';
+import { useColumnResizer } from '@/hooks/useColumnResizer';
+import { ResizeHandle } from '@/components/ui/ResizeHandle';
 
 const TRANSACTIONS_PER_PAGE = 50;
-const GRID_COLS = "grid-cols-[100px_1fr_100px_100px_100px_100px_80px_140px]";
+const DEFAULT_COLUMN_WIDTHS = ['100px', '1fr', '180px', '100px', '100px', '100px', '80px', '140px'];
 
 type TransactionSortColumn = 'date' | 'name' | 'car' | 'payment_method' | 'value' | 'status' | 'confidence';
 
@@ -45,6 +47,8 @@ export default function Transactions() {
   const { showToast } = useToast();
   const [location] = useLocation();
   const searchString = useSearch();
+
+  const { widths, updateWidth, gridTemplateColumns } = useColumnResizer('transactions-grid-cols', DEFAULT_COLUMN_WIDTHS);
 
   // Parse URL query parameters for date filtering
   const urlParams = useMemo(() => {
@@ -976,15 +980,39 @@ export default function Transactions() {
         transaction={transactionToUnreconcile}
       />
 
-      <Card className="overflow-hidden">
-        <div className={`grid ${GRID_COLS} gap-3 border-b px-4 py-3 text-xs font-semibold items-center bg-muted/40`}>
-          <SortableHeader label="Date" column="date" currentSort={sortConfig} onSort={handleSort} />
-          <SortableHeader label="Client / Depositor" column="name" currentSort={sortConfig} onSort={handleSort} />
-          <SortableHeader label="Car" column="car" currentSort={sortConfig} onSort={handleSort} />
-          <SortableHeader label="Method" column="payment_method" currentSort={sortConfig} onSort={handleSort} />
-          <SortableHeader label="Amount" column="value" currentSort={sortConfig} onSort={handleSort} />
-          <SortableHeader label="Status" column="status" currentSort={sortConfig} onSort={handleSort} />
-          <SortableHeader label="Confidence" column="confidence" currentSort={sortConfig} onSort={handleSort} />
+      <Card>
+        <div 
+          className="grid gap-3 border-b px-4 py-3 text-xs font-semibold items-center bg-muted/50 sticky top-0 z-10"
+          style={{ gridTemplateColumns }}
+        >
+          <div className="relative flex items-center h-full">
+            <SortableHeader label="Date" column="date" currentSort={sortConfig} onSort={handleSort} />
+            <ResizeHandle width={widths[0]} onResize={(w) => updateWidth(0, w)} />
+          </div>
+          <div className="relative flex items-center h-full">
+            <SortableHeader label="Client / Depositor" column="name" currentSort={sortConfig} onSort={handleSort} />
+            <ResizeHandle width={widths[1]} onResize={(w) => updateWidth(1, w)} />
+          </div>
+          <div className="relative flex items-center h-full">
+            <SortableHeader label="Car" column="car" currentSort={sortConfig} onSort={handleSort} />
+            <ResizeHandle width={widths[2]} onResize={(w) => updateWidth(2, w)} />
+          </div>
+          <div className="relative flex items-center h-full">
+            <SortableHeader label="Method" column="payment_method" currentSort={sortConfig} onSort={handleSort} />
+            <ResizeHandle width={widths[3]} onResize={(w) => updateWidth(3, w)} />
+          </div>
+          <div className="relative flex items-center h-full">
+            <SortableHeader label="Amount" column="value" currentSort={sortConfig} onSort={handleSort} />
+            <ResizeHandle width={widths[4]} onResize={(w) => updateWidth(4, w)} />
+          </div>
+          <div className="relative flex items-center h-full">
+            <SortableHeader label="Status" column="status" currentSort={sortConfig} onSort={handleSort} />
+            <ResizeHandle width={widths[5]} onResize={(w) => updateWidth(5, w)} />
+          </div>
+          <div className="relative flex items-center h-full">
+            <SortableHeader label="Confidence" column="confidence" currentSort={sortConfig} onSort={handleSort} />
+            <ResizeHandle width={widths[6]} onResize={(w) => updateWidth(6, w)} />
+          </div>
           <div className="text-right px-2">Actions</div>
         </div>
 
@@ -992,6 +1020,7 @@ export default function Transactions() {
           {filteredTransactions.map((transaction) => (
             <TransactionRow
               key={transaction.id}
+              gridTemplateColumns={gridTemplateColumns}
               transaction={transaction}
               selectedForMatch={selectedForMatch}
               onSelectForMatch={setSelectedForMatch}
@@ -1049,6 +1078,7 @@ function TransactionRow({
   onEdit,
   onUnreconcile,
   statusFilter,
+  gridTemplateColumns,
 }: {
   transaction: Transaction;
   selectedForMatch: Transaction | null;
@@ -1061,6 +1091,7 @@ function TransactionRow({
   onEdit: (transaction: Transaction) => void;
   onUnreconcile: (transaction: Transaction) => void;
   statusFilter: ReconciliationStatus | 'all' | 'deleted';
+  gridTemplateColumns: string;
 }) {
   const [showMatch, setShowMatch] = useState(false);
 
@@ -1112,7 +1143,10 @@ function TransactionRow({
 
   return (
     <div className={`group hover:bg-muted/50 transition-colors ${deletedTextStyle}`}>
-      <div className={`grid ${GRID_COLS} gap-3 px-4 py-3 items-center text-sm`}>
+      <div 
+        className="grid gap-3 px-4 py-3 items-center text-sm"
+        style={{ gridTemplateColumns }}
+      >
         {/* Date */}
         <div>
           <div className="font-medium text-xs">{formatDate(transaction.date)}</div>
@@ -1261,7 +1295,10 @@ function TransactionRow({
             <div className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">
               Matched Transaction ({transaction.confidence}% confidence)
             </div>
-            <div className={`grid ${GRID_COLS} gap-3 text-sm`}>
+            <div 
+              className="grid gap-3 text-sm"
+              style={{ gridTemplateColumns }}
+            >
               <div className="text-xs">{formatDate(matchedTransaction.date)}</div>
               
               <div className="min-w-0">

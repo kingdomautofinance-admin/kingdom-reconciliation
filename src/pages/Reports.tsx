@@ -408,8 +408,8 @@ export default function Reports() {
 
       {/* List View */}
       {view === 'list' && (
-        <Card className="overflow-hidden">
-          <div className={`grid ${GRID_COLS} gap-4 p-4 text-xs font-semibold border-b bg-muted/40 items-center`}>
+        <Card>
+          <div className={`grid ${GRID_COLS} gap-4 p-4 text-xs font-semibold border-b bg-muted/50 items-center sticky top-0 z-10`}>
             <SortableHeader label="Date" column="date" currentSort={sortConfig} onSort={handleSort} />
             <SortableHeader label="Reconciled" column="reconciled_count" currentSort={sortConfig} onSort={handleSort} />
             <SortableHeader label="Pending" column="pending_count" currentSort={sortConfig} onSort={handleSort} />

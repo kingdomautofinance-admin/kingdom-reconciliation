@@ -21,9 +21,12 @@ import { formatCurrency, formatISODateToUS, parseUSDateToISO } from '@/lib/utils
 import { DeleteReceivableModal } from '@/components/DeleteReceivableModal';
 import { EditReceivableModal } from '@/components/EditReceivableModal';
 import { ViewReceivableDetailsModal } from '@/components/ViewReceivableDetailsModal';
+import { useColumnResizer } from '@/hooks/useColumnResizer';
+import { ResizeHandle } from '@/components/ui/ResizeHandle';
 
 const RECEIVABLES_PER_PAGE = 50;
 const DATE_TOLERANCE_DAYS = 2;
+const DEFAULT_COLUMN_WIDTHS = ['75px', '40px', '1fr', '180px', '70px', '100px', '90px', '90px', '140px'];
 
 const normalizeText = (value?: string | null) =>
   (value ?? '').toString().trim();
@@ -79,6 +82,8 @@ export default function AccountsReceivable() {
   const urlParams = useMemo(() => new URLSearchParams(location.split('?')[1] || ''), [location]);
   const initialDealership = urlParams.get('dealership') || '';
   const initialSearch = urlParams.get('q') || '';
+
+  const { widths, updateWidth, gridTemplateColumns } = useColumnResizer('accounts-receivable-grid-cols', DEFAULT_COLUMN_WIDTHS);
 
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'received' | 'deleted'>('all');
   const [sortConfig, setSortConfig] = useState<SortConfig<ReceivableSortColumn>>({ column: 'date', direction: 'desc' });
@@ -960,17 +965,46 @@ export default function AccountsReceivable() {
         </Card>
       )}
 
-      <Card className="overflow-hidden">
-        <div className="grid grid-cols-[75px_40px_1fr_100px_70px_100px_90px_90px_140px] gap-3 border-b px-4 py-3 text-xs font-semibold">
-          <SortableHeader label="Date" column="date" currentSort={sortConfig} onSort={handleSort} />
-          <span />
-          <SortableHeader label="Client / Depositor" column="client" currentSort={sortConfig} onSort={handleSort} />
-          <SortableHeader label="Car" column="car" currentSort={sortConfig} onSort={handleSort} />
-          <SortableHeader label="Method" column="payment_method" currentSort={sortConfig} onSort={handleSort} />
-          <SortableHeader label="Dealership" column="dealership" currentSort={sortConfig} onSort={handleSort} />
-          <SortableHeader label="Amount" column="amount" currentSort={sortConfig} onSort={handleSort} align="right" />
-          <SortableHeader label="Status" column="status" currentSort={sortConfig} onSort={handleSort} />
-          <span className="text-right text-muted-foreground">Actions</span>
+      <Card>
+        <div 
+          className="grid gap-3 border-b bg-muted/50 px-4 py-3 text-xs font-semibold sticky top-0 z-10 items-center"
+          style={{ gridTemplateColumns }}
+        >
+          <div className="relative flex items-center h-full">
+            <SortableHeader label="Date" column="date" currentSort={sortConfig} onSort={handleSort} />
+            <ResizeHandle width={widths[0]} onResize={(w) => updateWidth(0, w)} />
+          </div>
+          <div className="relative flex items-center h-full">
+            <span />
+            <ResizeHandle width={widths[1]} onResize={(w) => updateWidth(1, w)} />
+          </div>
+          <div className="relative flex items-center h-full">
+            <SortableHeader label="Client / Depositor" column="client" currentSort={sortConfig} onSort={handleSort} />
+            <ResizeHandle width={widths[2]} onResize={(w) => updateWidth(2, w)} />
+          </div>
+          <div className="relative flex items-center h-full">
+            <SortableHeader label="Car" column="car" currentSort={sortConfig} onSort={handleSort} />
+            <ResizeHandle width={widths[3]} onResize={(w) => updateWidth(3, w)} />
+          </div>
+          <div className="relative flex items-center h-full">
+            <SortableHeader label="Method" column="payment_method" currentSort={sortConfig} onSort={handleSort} />
+            <ResizeHandle width={widths[4]} onResize={(w) => updateWidth(4, w)} />
+          </div>
+          <div className="relative flex items-center h-full">
+            <SortableHeader label="Dealership" column="dealership" currentSort={sortConfig} onSort={handleSort} />
+            <ResizeHandle width={widths[5]} onResize={(w) => updateWidth(5, w)} />
+          </div>
+          <div className="relative flex items-center h-full">
+            <SortableHeader label="Amount" column="amount" currentSort={sortConfig} onSort={handleSort} align="right" />
+            <ResizeHandle width={widths[6]} onResize={(w) => updateWidth(6, w)} />
+          </div>
+          <div className="relative flex items-center h-full">
+            <SortableHeader label="Status" column="status" currentSort={sortConfig} onSort={handleSort} />
+            <ResizeHandle width={widths[7]} onResize={(w) => updateWidth(7, w)} />
+          </div>
+          <div className="relative flex items-center h-full justify-end">
+            <span className="text-right text-muted-foreground">Actions</span>
+          </div>
         </div>
         {isLoading && (
           <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
@@ -1005,7 +1039,8 @@ export default function AccountsReceivable() {
           return (
             <div
               key={receivable.id}
-              className="grid grid-cols-[75px_40px_1fr_100px_70px_100px_90px_90px_140px] gap-3 border-b px-4 py-3 text-sm items-center"
+              className="grid gap-3 border-b px-4 py-3 text-sm items-center"
+              style={{ gridTemplateColumns }}
             >
               <div className="text-xs">{formatISODateToUS(receivable.date.slice(0, 10))}</div>
               <div className="flex items-center justify-center">
@@ -1417,9 +1452,9 @@ function MatchModal({ onClose, selectedReceivables, matchedTotals, onMatched }: 
     }
 
     const allocations = allocationDrafts
-      .map(draft => ({
-        receivableId: draft.receivableId,
-        amount: toNumber(draft.amount),
+      .map(allocation => ({
+        receivableId: allocation.receivableId,
+        amount: toNumber(allocation.amount),
       }))
       .filter(draft => draft.amount > 0);
 

@@ -21,9 +21,11 @@ import { fetchPreferredMinTransactionDate } from '@/lib/transactionFilters';
 import { DeleteTransactionModal } from '@/components/DeleteTransactionModal';
 import { EditTransactionModal } from '@/components/EditTransactionModal';
 import { useToast } from '@/components/ui/toast';
+import { useColumnResizer } from '@/hooks/useColumnResizer';
+import { ResizeHandle } from '@/components/ui/ResizeHandle';
 
 const TRANSACTIONS_PER_PAGE = 50;
-const GRID_COLS = "grid-cols-[100px_1fr_100px_100px_100px_100px_80px_140px]";
+const DEFAULT_COLUMN_WIDTHS = ['100px', '1fr', '180px', '100px', '100px', '100px', '80px', '140px'];
 
 const escapeForIlike = (term: string) =>
   term.replace(/([*\\])/g, '\\$1').replace(/,/g, '\\,').replace(/_/g, '\\_').replace(/%/g, '\\%');
@@ -39,6 +41,9 @@ const buildAmountCondition = (rawTerm: string) => {
 export default function KingdomTransactions() {
   const { showToast } = useToast();
   const [location] = useLocation();
+
+  const { widths, updateWidth, gridTemplateColumns } = useColumnResizer('kingdom-transactions-grid-cols', DEFAULT_COLUMN_WIDTHS);
+
   const urlParams = useMemo(() => new URLSearchParams(location.split('?')[1] || ''), [location]);
   const initialSearch = urlParams.get('q') || '';
   const [searchTerm, setSearchTerm] = useState('');
@@ -751,15 +756,39 @@ export default function KingdomTransactions() {
         }
       />
 
-      <Card className="overflow-hidden">
-        <div className={`grid ${GRID_COLS} gap-3 border-b px-4 py-3 text-xs font-semibold items-center bg-muted/40`}>
-          <div>Date</div>
-          <div>Client / Depositor</div>
-          <div>Car</div>
-          <div>Method</div>
-          <div>Amount</div>
-          <div>Status</div>
-          <div>Confidence</div>
+      <Card>
+        <div 
+          className="grid gap-3 border-b px-4 py-3 text-xs font-semibold items-center bg-muted/50 sticky top-0 z-10"
+          style={{ gridTemplateColumns }}
+        >
+          <div className="relative flex items-center h-full">
+            <span>Date</span>
+            <ResizeHandle width={widths[0]} onResize={(w) => updateWidth(0, w)} />
+          </div>
+          <div className="relative flex items-center h-full">
+            <span>Client / Depositor</span>
+            <ResizeHandle width={widths[1]} onResize={(w) => updateWidth(1, w)} />
+          </div>
+          <div className="relative flex items-center h-full">
+            <span>Car</span>
+            <ResizeHandle width={widths[2]} onResize={(w) => updateWidth(2, w)} />
+          </div>
+          <div className="relative flex items-center h-full">
+            <span>Method</span>
+            <ResizeHandle width={widths[3]} onResize={(w) => updateWidth(3, w)} />
+          </div>
+          <div className="relative flex items-center h-full">
+            <span>Amount</span>
+            <ResizeHandle width={widths[4]} onResize={(w) => updateWidth(4, w)} />
+          </div>
+          <div className="relative flex items-center h-full">
+            <span>Status</span>
+            <ResizeHandle width={widths[5]} onResize={(w) => updateWidth(5, w)} />
+          </div>
+          <div className="relative flex items-center h-full">
+            <span>Confidence</span>
+            <ResizeHandle width={widths[6]} onResize={(w) => updateWidth(6, w)} />
+          </div>
           <div className="text-right px-2">Actions</div>
         </div>
 
@@ -767,6 +796,7 @@ export default function KingdomTransactions() {
           {filteredTransactions.map((transaction) => (
             <TransactionRow
               key={transaction.id}
+              gridTemplateColumns={gridTemplateColumns}
               transaction={transaction}
               selectedForMatch={selectedForMatch}
               onSelectForMatch={setSelectedForMatch}
@@ -819,6 +849,7 @@ function TransactionRow({
   onViewDeleteReason,
   onEdit,
   statusFilter,
+  gridTemplateColumns,
 }: {
   transaction: Transaction;
   selectedForMatch: Transaction | null;
@@ -830,6 +861,7 @@ function TransactionRow({
   onViewDeleteReason: (transaction: Transaction) => void;
   onEdit: (transaction: Transaction) => void;
   statusFilter: ReconciliationStatus | 'all' | 'kingdom' | 'deleted';
+  gridTemplateColumns: string;
 }) {
   const [showMatch, setShowMatch] = useState(false);
 
@@ -868,7 +900,10 @@ function TransactionRow({
 
   return (
     <div className={`group hover:bg-muted/50 transition-colors ${deletedTextStyle}`}>
-      <div className={`grid ${GRID_COLS} gap-3 px-4 py-3 items-center text-sm`}>
+      <div 
+        className="grid gap-3 px-4 py-3 items-center text-sm"
+        style={{ gridTemplateColumns }}
+      >
         {/* Date */}
         <div>
           <div className="font-medium text-xs">{formatDate(transaction.date)}</div>
@@ -1006,41 +1041,37 @@ function TransactionRow({
             <div className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">
               Matched Transaction ({transaction.confidence}% confidence)
             </div>
-            <div className="grid grid-cols-5 gap-4 text-sm">
-              <div>
-                <div className="text-muted-foreground">Date</div>
-                <div>{formatDate(matchedTransaction.date)}</div>
-              </div>
-              <div>
-                <div className="text-muted-foreground">Client / Depositor</div>
+            <div 
+              className="grid gap-3 text-sm"
+              style={{ gridTemplateColumns }}
+            >
+              <div className="text-xs">{formatDate(matchedTransaction.date)}</div>
+              
+              <div className="min-w-0">
                 {matchedTransaction.name && (
-                  <div className="truncate" title={`Client: ${matchedTransaction.name}`}>
+                  <div className="truncate text-xs" title={`Client: ${matchedTransaction.name}`}>
                     {matchedTransaction.name}
                   </div>
                 )}
                 {matchedTransaction.depositor && (
                   <div
-                    className={`${matchedTransaction.name ? 'text-xs text-muted-foreground' : ''} truncate`}
+                    className={`${matchedTransaction.name ? 'text-xs text-muted-foreground' : 'text-xs'} truncate`}
                     title={`Depositor: ${matchedTransaction.depositor}`}
                   >
                     {matchedTransaction.depositor}
                   </div>
                 )}
                 {!matchedTransaction.name && !matchedTransaction.depositor && (
-                  <div>-</div>
+                  <div className="text-xs">-</div>
                 )}
               </div>
-              <div>
-                <div className="text-muted-foreground">Car</div>
-                <div>{matchedTransaction.car || '-'}</div>
-              </div>
-              <div>
-                <div className="text-muted-foreground">Amount</div>
-                <div>{formatCurrency(matchedTransaction.value)}</div>
-              </div>
-              <div>
-                <div className="text-muted-foreground">Source</div>
-                <div className="truncate text-xs">{matchedTransaction.source}</div>
+
+              <div className="truncate text-xs">{matchedTransaction.car || '-'}</div>
+              <div className="truncate text-xs">{matchedTransaction.payment_method || '-'}</div>
+              <div className="text-xs">{formatCurrency(matchedTransaction.value)}</div>
+              
+              <div className="col-span-3 text-xs text-muted-foreground truncate flex items-center">
+                Source: {matchedTransaction.source}
               </div>
             </div>
           </div>
