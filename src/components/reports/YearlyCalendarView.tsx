@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { MonthGridCard } from './MonthGridCard';
@@ -86,7 +86,7 @@ export function YearlyCalendarView({ dateSummaries, year, onMonthClick, onNaviga
               year={monthInfo.year}
               monthName={monthInfo.name}
               summaries={stats?.summaries || []}
-              onClick={() => onMonthClick(monthInfo.month, selectedYear)}
+              onClick={() => onMonthClick(monthInfo.month, year)}
             />
           );
         })}
