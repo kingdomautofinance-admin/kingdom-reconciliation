@@ -20,21 +20,12 @@ interface MatchDetail {
   failures: string[];
 }
 
-// Date match with ±2 days tolerance (100%)
+// Date match - exact same date only
 function checkDateMatch(date1: Date, date2: Date): number {
   const d1 = date1.toISOString().split('T')[0];
   const d2 = date2.toISOString().split('T')[0];
 
-  if (d1 === d2) return 100;
-
-  // Allow ±2 days tolerance
-  const date1Only = new Date(d1);
-  const date2Only = new Date(d2);
-  const diffInDays = Math.abs((date1Only.getTime() - date2Only.getTime()) / (1000 * 60 * 60 * 24));
-
-  if (diffInDays <= 2) return 100;
-
-  return 0;
+  return d1 === d2 ? 100 : 0;
 }
 
 // Exact value match (100%)
@@ -89,7 +80,7 @@ function evaluateReconciliation(ledger: Transaction, statement: Transaction): Ma
 
   // Check strict requirements
   if (dateMatch !== 100) {
-    failures.push(`Date mismatch: ${ledger.date} vs ${statement.date} (Required: within ±2 days, Got: ${dateMatch}%)`);
+    failures.push(`Date mismatch: ${ledger.date} vs ${statement.date} (Required: same date, Got: ${dateMatch}%)`);
   }
 
   if (valueMatch !== 100) {

@@ -25,20 +25,12 @@ interface IndexedTransaction extends Transaction {
   methodKey: string;
 }
 
+// Date match - exact same date only
 function checkDateMatch(date1: Date, date2: Date): number {
   const d1 = date1.toISOString().split('T')[0];
   const d2 = date2.toISOString().split('T')[0];
 
-  if (d1 === d2) return 100;
-
-  // Allow ±2 days tolerance
-  const date1Only = new Date(d1);
-  const date2Only = new Date(d2);
-  const diffInDays = Math.abs((date1Only.getTime() - date2Only.getTime()) / (1000 * 60 * 60 * 24));
-
-  if (diffInDays <= 2) return 100;
-
-  return 0;
+  return d1 === d2 ? 100 : 0;
 }
 
 function checkValueMatch(value1: number, value2: number): number {
@@ -88,7 +80,7 @@ function evaluateReconciliation(ledger: Transaction, statement: Transaction): Ma
   const failures: string[] = [];
 
   if (dateMatch !== 100) {
-    failures.push(`Date mismatch: ${ledger.date} vs ${statement.date} (Required: within ±2 days, Got: ${dateMatch}%)`);
+    failures.push(`Date mismatch: ${ledger.date} vs ${statement.date} (Required: same date, Got: ${dateMatch}%)`);
   }
 
   if (valueMatch !== 100) {
@@ -173,10 +165,9 @@ export async function findMatchForTransactionOptimized(
 
   const seenCandidates = new Set<string>();
 
-  for (let dayOffset = -2; dayOffset <= 2; dayOffset++) {
-    const offsetDate = new Date(transDate);
-    offsetDate.setDate(offsetDate.getDate() + dayOffset);
-    const dateKey = offsetDate.toISOString().split('T')[0];
+  // Only check exact same date (no offset)
+  const dateKey = transDate.toISOString().split('T')[0];
+  {
 
     const key = `${dateKey}|${valueKey}|${methodKey}`;
     const candidates = candidatesIndex.get(key) || [];

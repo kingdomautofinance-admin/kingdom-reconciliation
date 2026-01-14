@@ -98,9 +98,13 @@ export default function Transactions() {
 
   const hasActiveFilters = Boolean(appliedSearchTerm || appliedIsoDateFrom || appliedIsoDateTo);
 
-  // Auto-apply filters if URL parameters are present
+  // Auto-apply filters if URL parameters are present (e.g., from calendar click)
   useEffect(() => {
     if (urlParams.dateFrom || urlParams.dateTo) {
+      // Update visible input fields
+      setDateFrom(urlParams.dateFrom);
+      setDateTo(urlParams.dateTo);
+      // Apply the filters
       setAppliedIsoDateFrom(normalizeDateInput(urlParams.dateFrom));
       setAppliedIsoDateTo(normalizeDateInput(urlParams.dateTo));
     }
