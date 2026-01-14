@@ -51,11 +51,17 @@ export function ResizeHandle({ width, onResize, className = '' }: ResizeHandlePr
 
   return (
     <div
-      className={`absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/50 transition-colors z-20 ${
-        isResizing ? 'bg-primary' : 'bg-transparent'
+      className={`absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/5 transition-colors z-20 group ${
+        isResizing ? 'bg-primary/10' : 'bg-transparent'
       } ${className}`}
       onMouseDown={handleMouseDown}
       onClick={(e) => e.stopPropagation()}
-    />
+    >
+      <div 
+        className={`absolute right-0 top-2 bottom-2 w-px transition-colors ${
+          isResizing ? 'bg-primary' : 'bg-border/60 group-hover:bg-primary/50'
+        }`} 
+      />
+    </div>
   );
 }
