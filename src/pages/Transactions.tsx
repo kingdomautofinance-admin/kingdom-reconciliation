@@ -9,6 +9,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Eye, Search, CheckCircle2, Loader2, Link2, Link2Off, Calendar, Trash2, Pencil } from 'lucide-react';
+import { SortableHeader } from '@/components/ui/SortableHeader';
+import { type SortConfig, getNextSortState } from '@/lib/sorting';
 import {
   formatDate,
   formatCurrency,
@@ -24,6 +26,8 @@ import { UnreconcileTransactionModal } from '@/components/UnreconcileTransaction
 import { useToast } from '@/components/ui/toast';
 
 const TRANSACTIONS_PER_PAGE = 50;
+
+type TransactionSortColumn = 'date' | 'name' | 'car' | 'payment_method' | 'value' | 'status' | 'confidence';
 
 const escapeForIlike = (term: string) =>
   term.replace(/([*\\])/g, '\\$1').replace(/,/g, '\\,').replace(/_/g, '\\_').replace(/%/g, '\\%');
@@ -52,6 +56,7 @@ export default function Transactions() {
   }, [searchString]);
 
   const [searchTerm, setSearchTerm] = useState('');
+  const [sortConfig, setSortConfig] = useState<SortConfig<TransactionSortColumn>>({ column: 'date', direction: 'desc' });
   const [statusFilter, setStatusFilter] = useState<ReconciliationStatus | 'all' | 'deleted'>('all');
   const [selectedForMatch, setSelectedForMatch] = useState<Transaction | null>(null);
   const [dateFrom, setDateFrom] = useState(urlParams.dateFrom);
@@ -76,6 +81,10 @@ export default function Transactions() {
     setStatusFilter(nextFilter);
     void queryClient.invalidateQueries({ queryKey: ['transactions', 'infinite'] });
     void queryClient.invalidateQueries({ queryKey: ['transaction-counts'] });
+  };
+
+  const handleSort = (column: TransactionSortColumn) => {
+    setSortConfig(getNextSortState(sortConfig, column));
   };
 
   const normalizeDateInput = (value: string) => {
@@ -172,7 +181,7 @@ export default function Transactions() {
     isFetchingNextPage,
     isLoading,
   } = useInfiniteQuery<Transaction[]>({
-    queryKey: ['transactions', 'infinite', statusFilter, appliedSearchTerm, effectiveStartDate ?? null, appliedIsoDateTo ?? null, minDate ?? null],
+    queryKey: ['transactions', 'infinite', statusFilter, appliedSearchTerm, effectiveStartDate ?? null, appliedIsoDateTo ?? null, minDate ?? null, sortConfig.column, sortConfig.direction],
     queryFn: async ({ pageParam = 0 }) => {
       const start = pageParam as number;
       const end = start + TRANSACTIONS_PER_PAGE - 1;
@@ -180,9 +189,8 @@ export default function Transactions() {
       let query = supabase
         .from('transactions')
         .select('*')
-        .order('status', { ascending: true })
-        .order('sheet_order', { ascending: false, nullsFirst: false })
-        .order('date', { ascending: false });
+        .order(sortConfig.column, { ascending: sortConfig.direction === 'asc', nullsFirst: false })
+        .order('sheet_order', { ascending: false, nullsFirst: false });
 
       if (effectiveStartDate) {
         query = query.gte('date', effectiveStartDate);
@@ -932,6 +940,19 @@ export default function Transactions() {
         }}
         transaction={transactionToUnreconcile}
       />
+
+      {/* Header row - visible on large screens */}
+      <Card className="hidden lg:block p-3 mb-2">
+        <div className="grid grid-cols-7 gap-4 text-xs font-semibold">
+          <SortableHeader label="Date" column="date" currentSort={sortConfig} onSort={handleSort} />
+          <SortableHeader label="Client / Depositor" column="name" currentSort={sortConfig} onSort={handleSort} />
+          <SortableHeader label="Car" column="car" currentSort={sortConfig} onSort={handleSort} />
+          <SortableHeader label="Method" column="payment_method" currentSort={sortConfig} onSort={handleSort} />
+          <SortableHeader label="Amount" column="value" currentSort={sortConfig} onSort={handleSort} />
+          <SortableHeader label="Status" column="status" currentSort={sortConfig} onSort={handleSort} />
+          <SortableHeader label="Confidence" column="confidence" currentSort={sortConfig} onSort={handleSort} />
+        </div>
+      </Card>
 
       <div className="space-y-2">
         {filteredTransactions.map((transaction) => (

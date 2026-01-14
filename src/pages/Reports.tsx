@@ -6,12 +6,16 @@ import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Calendar, TrendingUp, CheckCircle2, Clock } from 'lucide-react';
+import { SortableHeader } from '@/components/ui/SortableHeader';
+import { type SortConfig, getNextSortState } from '@/lib/sorting';
 import { parseUSDateToISO, formatUSDateInput, formatISODateToUS } from '@/lib/utils';
 import { getMonthDateRange, getYearDateRange, formatMonthYear } from '@/lib/calendar-utils';
 import { DateSummaryCard, type DateSummary } from '@/components/reports/DateSummaryCard';
 import { ReportViewToggle, type ViewType } from '@/components/reports/ReportViewToggle';
 import { MonthlyCalendarView } from '@/components/reports/MonthlyCalendarView';
 import { YearlyCalendarView } from '@/components/reports/YearlyCalendarView';
+
+type ReportSortColumn = 'date' | 'reconciled_count' | 'pending_count' | 'total_count' | 'reconciliation_percentage';
 
 export default function Reports() {
   const [, setLocation] = useLocation();
@@ -24,6 +28,7 @@ export default function Reports() {
   const [view, setView] = useState<ViewType>('list');
   const [calendarMonth, setCalendarMonth] = useState<number>(() => new Date().getMonth() + 1);
   const [calendarYear, setCalendarYear] = useState<number>(() => new Date().getFullYear());
+  const [sortConfig, setSortConfig] = useState<SortConfig<ReportSortColumn>>({ column: 'date', direction: 'desc' });
 
   const openDatePicker = (ref: RefObject<HTMLInputElement>) => {
     const input = ref.current;
@@ -99,15 +104,34 @@ export default function Reports() {
     queryKey: ['reports-date-summaries', effectiveStartDate, effectiveEndDate],
     queryFn: async () => {
       // Fetch all transactions in the date range (excluding deleted)
-      const { data: transactions, error } = await supabase
-        .from('transactions')
-        .select('date, value, status')
-        .eq('is_deleted', false)
-        .gte('date', effectiveStartDate)
-        .lt('date', effectiveEndExclusive)
-        .order('date', { ascending: false });
+      // Using pagination to overcome Supabase's default 1000 row limit
+      const PAGE_SIZE = 1000;
+      let allTransactions: { date: string; value: string; status: string }[] = [];
+      let offset = 0;
+      let hasMore = true;
 
-      if (error) throw error;
+      while (hasMore) {
+        const { data: transactions, error } = await supabase
+          .from('transactions')
+          .select('date, value, status')
+          .eq('is_deleted', false)
+          .gte('date', effectiveStartDate)
+          .lt('date', effectiveEndExclusive)
+          .order('date', { ascending: false })
+          .range(offset, offset + PAGE_SIZE - 1);
+
+        if (error) throw error;
+
+        if (transactions && transactions.length > 0) {
+          allTransactions = allTransactions.concat(transactions);
+          offset += PAGE_SIZE;
+          hasMore = transactions.length === PAGE_SIZE;
+        } else {
+          hasMore = false;
+        }
+      }
+
+      const transactions = allTransactions;
 
       // Group by date
       const groupedByDate = new Map<string, {
@@ -181,6 +205,31 @@ export default function Reports() {
       overallPercentage,
     };
   }, [dateSummaries]);
+
+  const handleSort = (column: ReportSortColumn) => {
+    setSortConfig(getNextSortState(sortConfig, column));
+  };
+
+  const sortedSummaries = useMemo(() => {
+    if (!dateSummaries) return [];
+
+    return [...dateSummaries].sort((a, b) => {
+      const aValue = a[sortConfig.column];
+      const bValue = b[sortConfig.column];
+
+      // Handle string (date) vs number comparison
+      if (sortConfig.column === 'date') {
+        return sortConfig.direction === 'asc'
+          ? (aValue as string).localeCompare(bValue as string)
+          : (bValue as string).localeCompare(aValue as string);
+      }
+
+      // Numeric comparison
+      return sortConfig.direction === 'asc'
+        ? (aValue as number) - (bValue as number)
+        : (bValue as number) - (aValue as number);
+    });
+  }, [dateSummaries, sortConfig]);
 
   const handleDateClick = (date: string) => {
     // Format date as MM/DD/YYYY for the transaction page filter
@@ -358,7 +407,20 @@ export default function Reports() {
       {/* List View */}
       {view === 'list' && (
         <div className="space-y-3">
-          {dateSummaries?.length === 0 ? (
+          {/* Header row - visible on medium screens and above */}
+          <Card className="hidden md:block p-4">
+            <div className="flex items-center gap-4 text-xs font-semibold">
+              <div className="w-12" />
+              <SortableHeader label="Date" column="date" currentSort={sortConfig} onSort={handleSort} className="w-32" />
+              <SortableHeader label="Reconciled" column="reconciled_count" currentSort={sortConfig} onSort={handleSort} className="flex-1 min-w-[120px]" />
+              <SortableHeader label="Pending" column="pending_count" currentSort={sortConfig} onSort={handleSort} className="flex-1 min-w-[120px]" />
+              <SortableHeader label="Total" column="total_count" currentSort={sortConfig} onSort={handleSort} className="flex-1 min-w-[120px]" />
+              <SortableHeader label="%" column="reconciliation_percentage" currentSort={sortConfig} onSort={handleSort} className="w-20" />
+              <div className="w-5" />
+            </div>
+          </Card>
+
+          {sortedSummaries.length === 0 ? (
             <Card className="p-8">
               <div className="text-center text-muted-foreground">
                 <Clock className="h-12 w-12 mx-auto mb-2 opacity-50" />
@@ -366,7 +428,7 @@ export default function Reports() {
               </div>
             </Card>
           ) : (
-            dateSummaries?.map((summary) => (
+            sortedSummaries.map((summary) => (
               <DateSummaryCard
                 key={summary.date}
                 summary={summary}

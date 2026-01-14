@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useInfiniteQuery, useQuery, useMutation } from '@tanstack/react-query';
 import { useLocation } from 'wouter';
 import { AlertCircle, Link2, Loader2, Search, SlidersHorizontal, X, Calendar, Download, Copy, ChevronDown, Eye, CheckCircle2, Pencil, Trash2 } from 'lucide-react';
+import { SortableHeader } from '@/components/ui/SortableHeader';
+import { type SortConfig, getNextSortState } from '@/lib/sorting';
 import { supabase } from '@/lib/supabase';
 import { queryClient } from '@/lib/queryClient';
 import type {
@@ -67,6 +69,8 @@ type AllocationDraft = {
   amount: string;
 };
 
+type ReceivableSortColumn = 'date' | 'client' | 'car' | 'payment_method' | 'dealership' | 'amount' | 'status';
+
 type TransactionOption = Transaction & { remaining: number };
 
 export default function AccountsReceivable() {
@@ -77,6 +81,7 @@ export default function AccountsReceivable() {
   const initialSearch = urlParams.get('q') || '';
 
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'received' | 'deleted'>('all');
+  const [sortConfig, setSortConfig] = useState<SortConfig<ReceivableSortColumn>>({ column: 'date', direction: 'desc' });
   const [searchTerm, setSearchTerm] = useState('');
   const [dealershipFilter, setDealershipFilter] = useState(initialDealership);
   const [dateFrom, setDateFrom] = useState('');
@@ -114,6 +119,10 @@ export default function AccountsReceivable() {
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [receivableToDelete, setReceivableToDelete] = useState<DealerReceivable | null>(null);
   const [deleteModalMode, setDeleteModalMode] = useState<'delete' | 'view'>('delete');
+
+  const handleSort = (column: ReceivableSortColumn) => {
+    setSortConfig(getNextSortState(sortConfig, column));
+  };
 
   const applyFilters = () => {
     setAppliedFilters({
@@ -158,7 +167,7 @@ export default function AccountsReceivable() {
     isFetchingNextPage,
     isLoading,
   } = useInfiniteQuery<DealerReceivable[]>({
-    queryKey: ['dealer-receivables', statusFilter, appliedFilters.search, appliedFilters.dealership, appliedDateFrom ?? null, appliedDateTo ?? null],
+    queryKey: ['dealer-receivables', statusFilter, appliedFilters.search, appliedFilters.dealership, appliedDateFrom ?? null, appliedDateTo ?? null, sortConfig.column, sortConfig.direction],
     queryFn: async ({ pageParam = 0 }) => {
       const start = pageParam as number;
       const end = start + RECEIVABLES_PER_PAGE - 1;
@@ -166,7 +175,7 @@ export default function AccountsReceivable() {
       let query = supabase
         .from('dealer_receivables')
         .select('*')
-        .order('date', { ascending: false })
+        .order(sortConfig.column, { ascending: sortConfig.direction === 'asc', nullsFirst: false })
         .order('sheet_order', { ascending: false, nullsFirst: false });
 
       if (statusFilter === 'deleted') {
@@ -952,16 +961,16 @@ export default function AccountsReceivable() {
       )}
 
       <Card className="overflow-hidden">
-        <div className="grid grid-cols-[75px_40px_1fr_100px_70px_100px_90px_90px_140px] gap-3 border-b px-4 py-3 text-xs font-semibold text-muted-foreground">
-          <span>Date</span>
+        <div className="grid grid-cols-[75px_40px_1fr_100px_70px_100px_90px_90px_140px] gap-3 border-b px-4 py-3 text-xs font-semibold">
+          <SortableHeader label="Date" column="date" currentSort={sortConfig} onSort={handleSort} />
           <span />
-          <span>Client / Depositor</span>
-          <span>Car</span>
-          <span>Method</span>
-          <span>Dealership</span>
-          <span className="text-right">Amount</span>
-          <span>Status</span>
-          <span className="text-right">Actions</span>
+          <SortableHeader label="Client / Depositor" column="client" currentSort={sortConfig} onSort={handleSort} />
+          <SortableHeader label="Car" column="car" currentSort={sortConfig} onSort={handleSort} />
+          <SortableHeader label="Method" column="payment_method" currentSort={sortConfig} onSort={handleSort} />
+          <SortableHeader label="Dealership" column="dealership" currentSort={sortConfig} onSort={handleSort} />
+          <SortableHeader label="Amount" column="amount" currentSort={sortConfig} onSort={handleSort} align="right" />
+          <SortableHeader label="Status" column="status" currentSort={sortConfig} onSort={handleSort} />
+          <span className="text-right text-muted-foreground">Actions</span>
         </div>
         {isLoading && (
           <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
