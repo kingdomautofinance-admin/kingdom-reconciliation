@@ -9,6 +9,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Eye, Search, CheckCircle2, Loader2, Link2, Calendar, Trash2, Pencil } from 'lucide-react';
+import { SortableHeader } from '@/components/ui/SortableHeader';
+import { type SortConfig, getNextSortState } from '@/lib/sorting';
 import {
   formatDate,
   formatCurrency,
@@ -26,6 +28,8 @@ import { ResizeHandle } from '@/components/ui/ResizeHandle';
 
 const TRANSACTIONS_PER_PAGE = 50;
 const DEFAULT_COLUMN_WIDTHS = ['100px', '1fr', '180px', '100px', '100px', '100px', '80px', '140px'];
+
+type KingdomSortColumn = 'date' | 'name' | 'car' | 'payment_method' | 'value' | 'status' | 'confidence';
 
 const escapeForIlike = (term: string) =>
   term.replace(/([*\\])/g, '\\$1').replace(/,/g, '\\,').replace(/_/g, '\\_').replace(/%/g, '\\%');
@@ -47,6 +51,7 @@ export default function KingdomTransactions() {
   const urlParams = useMemo(() => new URLSearchParams(location.split('?')[1] || ''), [location]);
   const initialSearch = urlParams.get('q') || '';
   const [searchTerm, setSearchTerm] = useState('');
+  const [sortConfig, setSortConfig] = useState<SortConfig<KingdomSortColumn>>({ column: 'date', direction: 'desc' });
   const [statusFilter, setStatusFilter] = useState<ReconciliationStatus | 'all' | 'kingdom' | 'deleted'>('all');
   const [selectedForMatch, setSelectedForMatch] = useState<Transaction | null>(null);
   const [dateFrom, setDateFrom] = useState('');
@@ -70,6 +75,11 @@ export default function KingdomTransactions() {
     void queryClient.invalidateQueries({ queryKey: ['kingdom-transactions', 'infinite'] });
     void queryClient.invalidateQueries({ queryKey: ['kingdom-transaction-counts'] });
   };
+
+  const handleSort = (column: KingdomSortColumn) => {
+    setSortConfig(getNextSortState(sortConfig, column));
+  };
+
   const normalizeDateInput = (value: string) => {
     if (!value || value.length !== 10) return undefined;
     const iso = parseUSDateToISO(value);
@@ -152,7 +162,7 @@ export default function KingdomTransactions() {
     isFetchingNextPage,
     isLoading,
   } = useInfiniteQuery<Transaction[]>({
-    queryKey: ['kingdom-transactions', 'infinite', statusFilter, appliedSearchTerm, effectiveStartDate ?? null, appliedIsoDateTo ?? null, minDate ?? null],
+    queryKey: ['kingdom-transactions', 'infinite', statusFilter, appliedSearchTerm, effectiveStartDate ?? null, appliedIsoDateTo ?? null, minDate ?? null, sortConfig.column, sortConfig.direction],
     queryFn: async ({ pageParam = 0 }) => {
       const start = pageParam as number;
       const end = start + TRANSACTIONS_PER_PAGE - 1;
@@ -160,8 +170,8 @@ export default function KingdomTransactions() {
       let query = supabase
         .from('transactions')
         .select('*')
-        .order('status', { ascending: true })
-        .order('date', { ascending: false });
+        .order(sortConfig.column, { ascending: sortConfig.direction === 'asc', nullsFirst: false })
+        .order('sheet_order', { ascending: false, nullsFirst: false });
 
       if (effectiveStartDate) {
         query = query.gte('date', effectiveStartDate);
@@ -216,7 +226,7 @@ export default function KingdomTransactions() {
     enabled: canRunQueries,
   });
 
-  const allTransactions = data?.pages.flat() || [];
+  const allTransactions = useMemo(() => data?.pages.flat() || [], [data?.pages]);
 
   const { data: counts } = useQuery({
     queryKey: ['kingdom-transaction-counts', effectiveStartDate ?? null, appliedIsoDateTo ?? null, minDate ?? null],
@@ -310,7 +320,7 @@ export default function KingdomTransactions() {
           status: 'reconciled',
           matched_transaction_id: transaction2.id,
           confidence: 100,
-        })
+        } as any)
         .eq('id', transaction1.id);
 
       if (error1) throw error1;
@@ -321,7 +331,7 @@ export default function KingdomTransactions() {
           status: 'reconciled',
           matched_transaction_id: transaction1.id,
           confidence: 100,
-        })
+        } as any)
         .eq('id', transaction2.id);
 
       if (error2) throw error2;
@@ -356,8 +366,8 @@ export default function KingdomTransactions() {
         .update({
           is_deleted: true,
           deleted_reason: reason,
-          previous_status: currentTransaction.status,
-        })
+          previous_status: (currentTransaction as any).status,
+        } as any)
         .eq('id', transactionId);
 
       if (error) throw error;
@@ -389,9 +399,9 @@ export default function KingdomTransactions() {
         .update({
           is_deleted: false,
           deleted_reason: null,
-          status: transaction.previous_status || 'pending-ledger',
+          status: (transaction as any).previous_status || 'pending-ledger',
           previous_status: null,
-        })
+        } as any)
         .eq('id', transactionId);
 
       if (error) throw error;
@@ -411,7 +421,7 @@ export default function KingdomTransactions() {
     mutationFn: async ({ transactionId, updates }: { transactionId: string; updates: Partial<Transaction> }) => {
       const { error } = await supabase
         .from('transactions')
-        .update(updates)
+        .update(updates as any)
         .eq('id', transactionId);
 
       if (error) throw error;
@@ -476,14 +486,6 @@ export default function KingdomTransactions() {
       }
     };
   }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
-
-  if (isLoadingPreferredMinDate) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-muted-foreground">Loading transactions...</div>
-      </div>
-    );
-  }
 
   if (isLoadingPreferredMinDate) {
     return (
@@ -762,31 +764,31 @@ export default function KingdomTransactions() {
           style={{ gridTemplateColumns }}
         >
           <div className="relative flex items-center h-full">
-            <span>Date</span>
+            <SortableHeader label="Date" column="date" currentSort={sortConfig} onSort={handleSort} />
             <ResizeHandle width={widths[0]} onResize={(w) => updateWidth(0, w)} />
           </div>
           <div className="relative flex items-center h-full">
-            <span>Client / Depositor</span>
+            <SortableHeader label="Client / Depositor" column="name" currentSort={sortConfig} onSort={handleSort} />
             <ResizeHandle width={widths[1]} onResize={(w) => updateWidth(1, w)} />
           </div>
           <div className="relative flex items-center h-full">
-            <span>Car</span>
+            <SortableHeader label="Car" column="car" currentSort={sortConfig} onSort={handleSort} />
             <ResizeHandle width={widths[2]} onResize={(w) => updateWidth(2, w)} />
           </div>
           <div className="relative flex items-center h-full">
-            <span>Method</span>
+            <SortableHeader label="Method" column="payment_method" currentSort={sortConfig} onSort={handleSort} />
             <ResizeHandle width={widths[3]} onResize={(w) => updateWidth(3, w)} />
           </div>
           <div className="relative flex items-center h-full">
-            <span>Amount</span>
+            <SortableHeader label="Amount" column="value" currentSort={sortConfig} onSort={handleSort} />
             <ResizeHandle width={widths[4]} onResize={(w) => updateWidth(4, w)} />
           </div>
           <div className="relative flex items-center h-full">
-            <span>Status</span>
+            <SortableHeader label="Status" column="status" currentSort={sortConfig} onSort={handleSort} />
             <ResizeHandle width={widths[5]} onResize={(w) => updateWidth(5, w)} />
           </div>
           <div className="relative flex items-center h-full">
-            <span>Confidence</span>
+            <SortableHeader label="Confidence" column="confidence" currentSort={sortConfig} onSort={handleSort} />
             <ResizeHandle width={widths[6]} onResize={(w) => updateWidth(6, w)} />
           </div>
           <div className="text-right px-2">Actions</div>
