@@ -16,15 +16,8 @@ interface MonthStats {
   summaries: DateSummary[];
 }
 
-export function YearlyCalendarView({ dateSummaries, year: initialYear, onMonthClick, onNavigate }: YearlyCalendarViewProps) {
-  const [selectedYear, setSelectedYear] = useState(initialYear);
-
-  // Update when initialYear changes
-  useEffect(() => {
-    setSelectedYear(initialYear);
-  }, [initialYear]);
-
-  // Group summaries by month
+export function YearlyCalendarView({ dateSummaries, year, onMonthClick, onNavigate }: YearlyCalendarViewProps) {
+  // Group summaries by month for the displayed year
   const monthlyStats = useMemo(() => {
     const stats = new Map<number, MonthStats>();
 
@@ -36,7 +29,7 @@ export function YearlyCalendarView({ dateSummaries, year: initialYear, onMonthCl
     // Populate with actual data
     dateSummaries.forEach((summary) => {
       const [summaryYear, summaryMonth] = summary.date.split('-').map(Number);
-      if (summaryYear === selectedYear && summaryMonth >= 1 && summaryMonth <= 12) {
+      if (summaryYear === year && summaryMonth >= 1 && summaryMonth <= 12) {
         const monthData = stats.get(summaryMonth);
         if (monthData) {
           monthData.summaries.push(summary);
@@ -45,20 +38,16 @@ export function YearlyCalendarView({ dateSummaries, year: initialYear, onMonthCl
     });
 
     return stats;
-  }, [dateSummaries, selectedYear]);
+  }, [dateSummaries, year]);
 
-  const months = getMonthsInYear(selectedYear);
+  const months = getMonthsInYear(year);
 
   const handlePreviousYear = () => {
-    const newYear = selectedYear - 1;
-    setSelectedYear(newYear);
-    onNavigate?.(newYear);
+    onNavigate?.(year - 1);
   };
 
   const handleNextYear = () => {
-    const newYear = selectedYear + 1;
-    setSelectedYear(newYear);
-    onNavigate?.(newYear);
+    onNavigate?.(year + 1);
   };
 
   return (
@@ -74,7 +63,7 @@ export function YearlyCalendarView({ dateSummaries, year: initialYear, onMonthCl
           <span className="hidden sm:inline">Previous</span>
         </Button>
 
-        <h2 className="text-2xl md:text-3xl font-bold">{selectedYear}</h2>
+        <h2 className="text-2xl md:text-3xl font-bold">{year}</h2>
 
         <Button
           variant="outline"
