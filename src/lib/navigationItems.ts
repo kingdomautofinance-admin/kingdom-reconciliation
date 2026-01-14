@@ -22,6 +22,12 @@ export const primaryNavItems: NavItem[] = [
     group: 'primary'
   },
   {
+    label: 'System Audit',
+    path: '/kingdom',
+    icon: Crown,
+    group: 'primary'
+  },
+  {
     label: 'Accounts Receivables',
     path: '/accounts-receivable',
     icon: Landmark,
@@ -31,12 +37,6 @@ export const primaryNavItems: NavItem[] = [
     label: 'Stripe Payouts',
     path: '/stripe-reconciliation',
     icon: CreditCard,
-    group: 'primary'
-  },
-  {
-    label: 'Bank and Credit Card',
-    path: '/kingdom',
-    icon: Crown,
     group: 'primary'
   },
   {

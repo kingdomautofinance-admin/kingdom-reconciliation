@@ -1,50 +1,102 @@
-import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
-import { useState, useMemo, useRef, useEffect } from 'react';
+import { useInfiniteQuery, useMutation } from '@tanstack/react-query';
+import { useState, useMemo, useRef, useEffect, type RefObject } from 'react';
 import { supabase } from '@/lib/supabase';
-import { formatCurrency, formatDate } from '@/lib/utils';
+import { 
+  formatCurrency, 
+  formatDate,
+  parseUSDateToISO,
+  formatUSDateInput,
+  formatISODateToUS
+} from '@/lib/utils';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { AlertCircle, CheckCircle2, Loader2, Search } from 'lucide-react';
+import { 
+  Loader2, 
+  Search, 
+  X,
+  Link2,
+  Calendar
+} from 'lucide-react';
 import { toast } from '@/components/ui/toast';
 import { queryClient } from '@/lib/queryClient';
+import { useColumnResizer } from '@/hooks/useColumnResizer';
+import { ResizeHandle } from '@/components/ui/ResizeHandle';
+import { SortableHeader } from '@/components/ui/SortableHeader';
+import { type SortConfig, getNextSortState } from '@/lib/sorting';
 
-const AUDIT_PER_PAGE = 50;
+const ITEMS_PER_PAGE = 50;
+const DEFAULT_COLUMN_WIDTHS = ['100px', '1fr', '150px', '120px', '120px', '110px', '100px', '120px'];
 
-interface AuditRow {
-  ledger_id: string;
-  ledger_date: string;
-  ledger_value: string;
-  ledger_name: string;
-  ledger_source: string;
-  system_id: string | null;
-  system_date: string | null;
-  system_value: string | null;
-  gap_amount: string | null;
-  confidence_score: number | null;
-  is_confirmed: boolean | null;
-  link_id: string | null;
+type AuditSortColumn = 'date' | 'name' | 'car' | 'origin' | 'payment_method' | 'value' | 'status';
+
+interface UnifiedAuditItem {
+  origin: 'ledger' | 'system';
+  id: string;
+  date: string;
+  value: string;
+  name: string | null;
+  depositor: string | null;
+  car: string | null;
+  payment_method: string | null;
+  source: string;
+  status: string;
+  matched_transaction_id: string | null;
 }
 
 export default function KingdomTransactions() {
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'mismatch' | 'perfect' | 'unmatched'>('all');
+  const [originFilter, setOriginFilter] = useState<'all' | 'ledger' | 'system'>('all');
+  const [selectedForMatch, setSelectedForMatch] = useState<UnifiedAuditItem | null>(null);
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [sortConfig, setSortConfig] = useState<SortConfig<AuditSortColumn>>({ column: 'date', direction: 'desc' });
+  
+  const { widths, updateWidth, gridTemplateColumns } = useColumnResizer('audit-grid-cols', DEFAULT_COLUMN_WIDTHS);
+  
   const observerTarget = useRef<HTMLDivElement>(null);
+  const dateFromPickerRef = useRef<HTMLInputElement>(null);
+  const dateToPickerRef = useRef<HTMLInputElement>(null);
 
-  const { data: settings } = useQuery({
-    queryKey: ['reconciliation-settings'],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('reconciliation_settings')
-        .select('*')
-        .single();
-      if (error && error.code !== 'PGRST116') throw error;
-      return data || { accuracy_threshold: 1.00 };
-    },
-  });
+  const openDatePicker = (ref: RefObject<HTMLInputElement>) => {
+    const input = ref.current;
+    if (input && typeof input.showPicker === 'function') {
+      input.showPicker();
+    }
+  };
 
-  const threshold = parseFloat(settings?.accuracy_threshold?.toString() || '1.00');
+  const handleSort = (column: AuditSortColumn) => {
+    setSortConfig(getNextSortState(sortConfig, column));
+  };
+
+  const normalizeDateInput = (value: string) => {
+    if (!value || value.length !== 10) return undefined;
+    const iso = parseUSDateToISO(value);
+    return iso || undefined;
+  };
+
+  const pendingIsoDateFrom = useMemo(() => normalizeDateInput(dateFrom), [dateFrom]);
+  const pendingIsoDateTo = useMemo(() => normalizeDateInput(dateTo), [dateTo]);
+
+  const [appliedSearchTerm, setAppliedSearchTerm] = useState('');
+  const [appliedIsoDateFrom, setAppliedIsoDateFrom] = useState<string | undefined>(undefined);
+  const [appliedIsoDateTo, setAppliedIsoDateTo] = useState<string | undefined>(undefined);
+
+  const handleApplyFilters = () => {
+    setAppliedSearchTerm(searchTerm.trim());
+    setAppliedIsoDateFrom(pendingIsoDateFrom);
+    setAppliedIsoDateTo(pendingIsoDateTo);
+  };
+
+  const handleClearFilters = () => {
+    setSearchTerm('');
+    setDateFrom('');
+    setDateTo('');
+    setAppliedSearchTerm('');
+    setAppliedIsoDateFrom(undefined);
+    setAppliedIsoDateTo(undefined);
+  };
 
   const {
     data,
@@ -52,54 +104,46 @@ export default function KingdomTransactions() {
     hasNextPage,
     isFetchingNextPage,
     isLoading,
-  } = useInfiniteQuery<AuditRow[]>({
-    queryKey: ['system-audit', statusFilter, searchTerm],
+  } = useInfiniteQuery({
+    queryKey: ['audit-unified-list', appliedSearchTerm, originFilter, appliedIsoDateFrom, appliedIsoDateTo, sortConfig],
     queryFn: async ({ pageParam = 0 }) => {
       const start = pageParam as number;
-      const end = start + AUDIT_PER_PAGE - 1;
+      const end = start + ITEMS_PER_PAGE - 1;
 
+      // @ts-expect-error - unified_audit_list is a view not yet in Database types
       let query = supabase
-        .from('system_audit_view')
+        .from('unified_audit_list')
         .select('*')
-        .order('ledger_date', { ascending: false });
+        .neq('status', 'reconciled')
+        .order(sortConfig.column, { ascending: sortConfig.direction === 'asc' });
 
-      if (searchTerm) {
-        query = query.or(`ledger_name.ilike.%${searchTerm}%,ledger_source.ilike.%${searchTerm}%`);
+      if (appliedSearchTerm) {
+        query = query.or(`name.ilike.%${appliedSearchTerm}%,depositor.ilike.%${appliedSearchTerm}%,car.ilike.%${appliedSearchTerm}%`);
       }
 
-      if (statusFilter === 'mismatch') {
-        query = query.not('gap_amount', 'eq', 0).not('gap_amount', 'is', null);
-      } else if (statusFilter === 'perfect') {
-        query = query.eq('gap_amount', 0);
-      } else if (statusFilter === 'unmatched') {
-        query = query.is('system_id', null);
+      if (originFilter !== 'all') {
+        query = query.eq('origin', originFilter);
+      }
+
+      if (appliedIsoDateFrom) {
+        query = query.gte('date', appliedIsoDateFrom);
+      }
+
+      if (appliedIsoDateTo) {
+        query = query.lte('date', appliedIsoDateTo);
       }
 
       const { data, error } = await query.range(start, end);
       if (error) throw error;
-      return data as AuditRow[];
+      return data as UnifiedAuditItem[];
     },
     getNextPageParam: (lastPage, allPages) => {
-      return lastPage.length === AUDIT_PER_PAGE ? allPages.length * AUDIT_PER_PAGE : undefined;
+      return lastPage.length === ITEMS_PER_PAGE ? allPages.length * ITEMS_PER_PAGE : undefined;
     },
     initialPageParam: 0,
   });
 
-  const confirmMatchMutation = useMutation({
-    mutationFn: async (linkId: string) => {
-      const { error } = await supabase
-        .from('reconciliation_links')
-        .update({ is_confirmed: true })
-        .eq('id', linkId);
-      if (error) throw error;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['system-audit'] });
-      toast({ title: 'Match confirmed' });
-    },
-  });
-
-  const auditRows = useMemo(() => data?.pages.flat() || [], [data]);
+  const items = useMemo(() => data?.pages.flat() || [], [data]);
 
   useEffect(() => {
     const observer = new IntersectionObserver(
@@ -111,194 +155,267 @@ export default function KingdomTransactions() {
       { threshold: 0.1 }
     );
 
-    const target = observerTarget.current;
-    if (target) observer.observe(target);
-    return () => {
-      if (target) observer.unobserve(target);
-    };
-  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
+    if (observerTarget.current) {
+      observer.observe(observerTarget.current);
+    }
 
-  const getGapColor = (gap: string | null) => {
-    if (gap === null) return 'text-muted-foreground';
-    const gapVal = Math.abs(parseFloat(gap));
-    if (gapVal === 0) return 'text-green-600 dark:text-green-400';
-    if (gapVal < threshold) return 'text-amber-500';
-    return 'text-red-500';
-  };
+    return () => observer.disconnect();
+  }, [fetchNextPage, hasNextPage, isFetchingNextPage]);
 
-  const getConfidenceColor = (score: number | null) => {
-    if (score === null) return 'bg-gray-100 text-gray-800';
-    if (score >= 95) return 'bg-green-100 text-green-800';
-    if (score >= 80) return 'bg-yellow-100 text-yellow-800';
-    return 'bg-red-100 text-red-800';
-  };
+  const manualMatchMutation = useMutation({
+    mutationFn: async ({ item1, item2 }: { item1: UnifiedAuditItem; item2: UnifiedAuditItem }) => {
+      const ledger = item1.origin === 'ledger' ? item1 : item2;
+      const system = item1.origin === 'system' ? item1 : item2;
+
+      // @ts-expect-error - type mismatch in Supabase client
+      const { error: linkError } = await supabase
+        .from('reconciliation_links')
+        .insert({
+          ledger_id: ledger.id,
+          target_id: system.id,
+          type: 'SYSTEM',
+          gap_amount: (parseFloat(ledger.value) - parseFloat(system.value)).toFixed(2),
+          confidence_score: 100,
+          is_confirmed: true
+        });
+      if (linkError) throw linkError;
+
+      // @ts-expect-error - type mismatch in Supabase client
+      const { error: ledgerError } = await supabase
+        .from('transactions')
+        .update({ status: 'reconciled', matched_transaction_id: system.id })
+        .eq('id', ledger.id);
+      if (ledgerError) throw ledgerError;
+
+      // @ts-expect-error - type mismatch in Supabase client
+      const { error: systemError } = await supabase
+        .from('kingdom_transactions')
+        .update({ status: 'reconciled', matched_transaction_id: ledger.id })
+        .eq('id', system.id);
+      if (systemError) throw systemError;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['audit-unified-list'] });
+      setSelectedForMatch(null);
+      toast({ title: 'System Audit Match successful' });
+    },
+    onError: (error: Error) => {
+      toast({ title: 'Error matching', description: error.message, variant: 'destructive' });
+    }
+  });
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="space-y-4 pb-24">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">System Audit</h1>
-          <p className="text-muted-foreground">
-            Compare Google Sheets Ledger against Kingdom CRM System data.
-          </p>
+          <p className="text-muted-foreground">Match CRM transactions (Kingdom) with Ledger entries.</p>
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-4 items-end">
-        <div className="relative flex-1 min-w-[300px]">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Search ledger entries..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="pl-9"
-          />
+      <Card className="p-4 space-y-4 sticky top-0 z-20 bg-background/95 backdrop-blur border-b">
+        <div className="flex flex-wrap gap-4">
+          <div className="flex-1 min-w-[200px] relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Search by client, car, description..."
+              className="pl-9"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleApplyFilters()}
+            />
+          </div>
+
+          <div className="flex gap-2">
+            <div className="relative">
+              <Calendar className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                type="text"
+                placeholder="MM/DD/YYYY"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(formatUSDateInput(e.target.value))}
+                onClick={() => openDatePicker(dateFromPickerRef)}
+                className="pl-9 w-40 cursor-pointer"
+                maxLength={10}
+              />
+              <input
+                ref={dateFromPickerRef}
+                type="date"
+                value={parseUSDateToISO(dateFrom) ?? ''}
+                onChange={(e) => setDateFrom(e.target.value ? formatISODateToUS(e.target.value) : '')}
+                className="absolute inset-0 h-0 w-0 opacity-0 pointer-events-none"
+              />
+            </div>
+            <div className="relative">
+              <Calendar className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                type="text"
+                placeholder="MM/DD/YYYY"
+                value={dateTo}
+                onChange={(e) => setDateTo(formatUSDateInput(e.target.value))}
+                onClick={() => openDatePicker(dateToPickerRef)}
+                className="pl-9 w-40 cursor-pointer"
+                maxLength={10}
+              />
+              <input
+                ref={dateToPickerRef}
+                type="date"
+                value={parseUSDateToISO(dateTo) ?? ''}
+                onChange={(e) => setDateTo(e.target.value ? formatISODateToUS(e.target.value) : '')}
+                className="absolute inset-0 h-0 w-0 opacity-0 pointer-events-none"
+              />
+            </div>
+            <Button variant="secondary" onClick={handleApplyFilters}>Apply</Button>
+            <Button variant="ghost" onClick={handleClearFilters}>Clear</Button>
+          </div>
+
+          <div className="flex bg-muted p-1 rounded-md ml-auto">
+            <Button
+              variant={originFilter === 'all' ? 'secondary' : 'ghost'}
+              size="sm"
+              onClick={() => setOriginFilter('all')}
+            >
+              All
+            </Button>
+            <Button
+              variant={originFilter === 'ledger' ? 'secondary' : 'ghost'}
+              size="sm"
+              onClick={() => setOriginFilter('ledger')}
+            >
+              Ledger
+            </Button>
+            <Button
+              variant={originFilter === 'system' ? 'secondary' : 'ghost'}
+              size="sm"
+              onClick={() => setOriginFilter('system')}
+            >
+              System (CRM)
+            </Button>
+          </div>
         </div>
-        <div className="flex gap-2">
-          <Button
-            variant={statusFilter === 'all' ? 'default' : 'outline'}
-            onClick={() => setStatusFilter('all')}
-            size="sm"
-          >
-            All
-          </Button>
-          <Button
-            variant={statusFilter === 'mismatch' ? 'default' : 'outline'}
-            onClick={() => setStatusFilter('mismatch')}
-            size="sm"
-          >
-            Mismatches
-          </Button>
-          <Button
-            variant={statusFilter === 'perfect' ? 'default' : 'outline'}
-            onClick={() => setStatusFilter('perfect')}
-            size="sm"
-          >
-            Perfect Match
-          </Button>
-          <Button
-            variant={statusFilter === 'unmatched' ? 'default' : 'outline'}
-            onClick={() => setStatusFilter('unmatched')}
-            size="sm"
-          >
-            Unmatched
-          </Button>
-        </div>
-      </div>
+
+        {selectedForMatch && (
+          <div className="flex items-center justify-between bg-accent/50 p-3 rounded-lg border border-accent animate-in fade-in slide-in-from-top-1">
+            <div className="flex items-center gap-4">
+              <div className="p-2 bg-accent rounded-full">
+                <Link2 className="h-4 w-4" />
+              </div>
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Selected for Match</div>
+                <div className="font-medium">
+                  {formatDate(selectedForMatch.date)} - {selectedForMatch.name || selectedForMatch.depositor || 'Unnamed'} ({formatCurrency(selectedForMatch.value)})
+                </div>
+              </div>
+            </div>
+            <Button variant="ghost" size="sm" onClick={() => setSelectedForMatch(null)}>
+              <X className="h-4 w-4 mr-2" /> Cancel
+            </Button>
+          </div>
+        )}
+      </Card>
 
       <Card>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm text-left">
-            <thead className="bg-muted/50 text-xs uppercase font-semibold">
-              <tr>
-                <th className="px-4 py-3">Date</th>
-                <th className="px-4 py-3">Ledger Entry</th>
-                <th className="px-4 py-3">System Entry</th>
-                <th className="px-4 py-3 text-right">Ledger Val</th>
-                <th className="px-4 py-3 text-right">System Val</th>
-                <th className="px-4 py-3 text-right">Gap</th>
-                <th className="px-4 py-3 text-center">Score</th>
-                <th className="px-4 py-3 text-center">Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {isLoading ? (
-                <tr>
-                  <td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">
-                    <Loader2 className="h-6 w-6 animate-spin mx-auto mb-2" />
-                    Loading audit data...
-                  </td>
-                </tr>
-              ) : auditRows.length === 0 ? (
-                <tr>
-                  <td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">
-                    No records found matching filters.
-                  </td>
-                </tr>
-              ) : (
-                auditRows.map((row) => (
-                  <tr 
-                    key={row.ledger_id} 
-                    className="hover:bg-muted/30 transition-colors cursor-default"
-                    onDoubleClick={() => {
-                      if (row.link_id && !row.is_confirmed && row.confidence_score && row.confidence_score < 100) {
-                        confirmMatchMutation.mutate(row.link_id);
-                      }
-                    }}
-                  >
-                    <td className="px-4 py-3 align-top whitespace-nowrap">
-                      {formatDate(row.ledger_date)}
-                    </td>
-                    <td className="px-4 py-3 align-top">
-                      <div className="font-medium truncate max-w-[200px]" title={row.ledger_name}>
-                        {row.ledger_name || 'N/A'}
-                      </div>
-                      <div className="text-xs text-muted-foreground truncate max-w-[200px]" title={row.ledger_source}>
-                        {row.ledger_source}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 align-top">
-                      {row.system_id ? (
-                        <>
-                          <div className="font-medium text-xs">Matched in System</div>
-                          <div className="text-xs text-muted-foreground">{formatDate(row.system_date!)}</div>
-                        </>
-                      ) : (
-                        <div className="text-red-500 flex items-center gap-1 text-xs">
-                          <AlertCircle className="h-3 w-3" />
-                          Not in Kingdom CRM
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 align-top text-right font-mono">
-                      {formatCurrency(row.ledger_value)}
-                    </td>
-                    <td className="px-4 py-3 align-top text-right font-mono text-muted-foreground">
-                      {row.system_value ? formatCurrency(row.system_value) : '-'}
-                    </td>
-                    <td className={`px-4 py-3 align-top text-right font-bold font-mono ${getGapColor(row.gap_amount)}`}>
-                      {row.gap_amount ? formatCurrency(row.gap_amount) : '-'}
-                    </td>
-                    <td className="px-4 py-3 align-top text-center">
-                      {row.confidence_score !== null && (
-                        <Badge className={`${getConfidenceColor(row.confidence_score)} border-0`}>
-                          {row.confidence_score}%
-                        </Badge>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 align-top text-center">
-                      {row.is_confirmed ? (
-                        <Badge variant="outline" className="text-green-600 border-green-200 bg-green-50">
-                          <CheckCircle2 className="h-3 w-3 mr-1" />
-                          Confirmed
-                        </Badge>
-                      ) : row.link_id && row.confidence_score && row.confidence_score < 100 ? (
-                        <div className="flex flex-col items-center gap-1">
-                           <Badge variant="outline" className="text-amber-600 border-amber-200 bg-amber-50">
-                            Low Confidence
-                          </Badge>
-                          <span className="text-[10px] text-muted-foreground">Double-click to confirm</span>
-                        </div>
-                      ) : row.link_id ? (
-                        <Badge variant="outline" className="text-blue-600 border-blue-200 bg-blue-50">
-                          Auto-Matched
-                        </Badge>
-                      ) : (
-                        <Badge variant="outline" className="text-muted-foreground">
-                          Pending
-                        </Badge>
-                      )}
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+        <div 
+          className="grid gap-4 px-4 py-3 font-semibold text-sm border-b bg-muted/50 items-center"
+          style={{ gridTemplateColumns }}
+        >
+          <div className="relative flex items-center h-full">
+            <SortableHeader label="Date" column="date" currentSort={sortConfig} onSort={handleSort} />
+            <ResizeHandle width={widths[0]} onResize={(w) => updateWidth(0, w)} />
+          </div>
+          <div className="relative flex items-center h-full">
+            <SortableHeader label="Description / Client" column="name" currentSort={sortConfig} onSort={handleSort} />
+            <ResizeHandle width={widths[1]} onResize={(w) => updateWidth(1, w)} />
+          </div>
+          <div className="relative flex items-center h-full">
+            <SortableHeader label="Car" column="car" currentSort={sortConfig} onSort={handleSort} />
+            <ResizeHandle width={widths[2]} onResize={(w) => updateWidth(2, w)} />
+          </div>
+          <div className="relative flex items-center h-full">
+            <SortableHeader label="Origin" column="origin" currentSort={sortConfig} onSort={handleSort} />
+            <ResizeHandle width={widths[3]} onResize={(w) => updateWidth(3, w)} />
+          </div>
+          <div className="relative flex items-center h-full">
+            <SortableHeader label="Method" column="payment_method" currentSort={sortConfig} onSort={handleSort} />
+            <ResizeHandle width={widths[4]} onResize={(w) => updateWidth(4, w)} />
+          </div>
+          <div className="relative flex items-center h-full">
+            <SortableHeader label="Amount" column="value" currentSort={sortConfig} onSort={handleSort} />
+            <ResizeHandle width={widths[5]} onResize={(w) => updateWidth(5, w)} />
+          </div>
+          <div className="relative flex items-center h-full">
+            <SortableHeader label="Status" column="status" currentSort={sortConfig} onSort={handleSort} />
+            <ResizeHandle width={widths[6]} onResize={(w) => updateWidth(6, w)} />
+          </div>
+          <div className="text-right pr-4">Actions</div>
         </div>
-        <div ref={observerTarget} className="p-4 border-t text-center text-xs text-muted-foreground">
-          {isFetchingNextPage ? 'Loading more records...' : hasNextPage ? 'Scroll for more' : `Showing all ${auditRows.length} records`}
+        
+        <div className="divide-y">
+          {isLoading ? (
+            <div className="p-12 text-center"><Loader2 className="h-8 w-8 animate-spin mx-auto text-muted-foreground" /></div>
+          ) : items.length === 0 ? (
+            <div className="p-12 text-center text-muted-foreground">No transactions found matching your filters.</div>
+          ) : (
+            items.map((item) => (
+              <div 
+                key={`${item.origin}-${item.id}`} 
+                className={`group hover:bg-muted/50 transition-colors ${selectedForMatch?.id === item.id ? 'bg-accent/30' : ''}`}
+              >
+                <div 
+                  className="grid gap-4 px-4 py-3 items-center text-sm"
+                  style={{ gridTemplateColumns }}
+                >
+                  <div className="text-xs">{formatDate(item.date)}</div>
+                  <div className="min-w-0">
+                    <div className="font-medium truncate">{item.name || '-'}</div>
+                    {item.depositor && <div className="text-xs text-muted-foreground truncate">{item.depositor}</div>}
+                  </div>
+                  <div className="truncate text-xs">{item.car || '-'}</div>
+                  <div>
+                    <Badge variant="outline" className={item.origin === 'ledger' ? 'border-blue-200 bg-blue-50 text-blue-700' : 'border-purple-200 bg-purple-50 text-purple-700'}>
+                      {item.origin === 'ledger' ? 'Ledger' : 'System'}
+                    </Badge>
+                  </div>
+                  <div className="truncate text-xs">{item.payment_method || '-'}</div>
+                  <div className="font-medium text-xs">{formatCurrency(item.value)}</div>
+                  <div>
+                    <Badge variant="secondary" className="capitalize text-[10px]">{item.status}</Badge>
+                  </div>
+                  <div className="flex items-center justify-end gap-1 pr-2">
+                    <Button
+                      size="icon"
+                      variant={selectedForMatch?.id === item.id ? 'default' : 'ghost'}
+                      className="h-8 w-8"
+                      disabled={manualMatchMutation.isPending || !!(selectedForMatch && selectedForMatch.origin === item.origin)}
+                      onClick={() => {
+                        if (selectedForMatch?.id === item.id) {
+                          setSelectedForMatch(null);
+                        } else if (selectedForMatch) {
+                          manualMatchMutation.mutate({ item1: selectedForMatch, item2: item });
+                        } else {
+                          setSelectedForMatch(item);
+                        }
+                      }}
+                      title={selectedForMatch?.id === item.id ? 'Cancel selection' : selectedForMatch ? 'Match with selected' : 'Select for matching'}
+                    >
+                      {manualMatchMutation.isPending && selectedForMatch?.id === item.id ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Link2 className="h-4 w-4" />
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
         </div>
       </Card>
+
+      <div ref={observerTarget} className="py-8 flex justify-center">
+        {isFetchingNextPage && <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />}
+        {!hasNextPage && items.length > 0 && <p className="text-sm text-muted-foreground">No more transactions to load</p>}
+      </div>
     </div>
   );
 }
