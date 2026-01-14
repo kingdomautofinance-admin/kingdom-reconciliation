@@ -2,6 +2,12 @@ import { compareTwoStrings } from 'string-similarity';
 import type { Transaction } from './database.types';
 import { supabase } from './supabase';
 
+interface ReconciliationSettings {
+  accuracy_threshold: number;
+  stripe_fee_percent: number;
+  stripe_fixed_fee: number;
+}
+
 interface ReconciliationResult {
   matched: number;
   totalProcessed: number;
@@ -46,7 +52,7 @@ function checkPaymentMethodMatch(method1: string | null, method2: string | null)
   return m1 === m2 ? 100 : 0;
 }
 
-function checkNameMatch(trans1: Transaction, trans2: Transaction): number {
+function checkNameMatch(trans1: any, trans2: any): number {
   const name1Options = [trans1.name, trans1.depositor].filter(Boolean);
   const name2Options = [trans2.name, trans2.depositor].filter(Boolean);
 
@@ -68,49 +74,94 @@ function checkNameMatch(trans1: Transaction, trans2: Transaction): number {
   return Math.round(maxSimilarity * 100);
 }
 
-function evaluateReconciliation(ledger: Transaction, statement: Transaction): MatchDetail {
-  const dateMatch = checkDateMatch(new Date(ledger.date), new Date(statement.date));
-  const valueMatch = checkValueMatch(
-    typeof ledger.value === 'string' ? parseFloat(ledger.value) : ledger.value,
-    typeof statement.value === 'string' ? parseFloat(statement.value) : statement.value
-  );
-  const paymentMethodMatch = checkPaymentMethodMatch(ledger.payment_method, statement.payment_method);
-  const nameMatch = checkNameMatch(ledger, statement);
+/**
+ * NEW: Automated matching for System Audit (Ledger vs Kingdom CRM)
+ */
+export async function autoReconcileSystemAudit(): Promise<ReconciliationResult> {
+  console.log('Starting System Audit reconciliation...');
+  
+  // 1. Fetch settings
+  const { data: settingsData } = await supabase
+    .from('reconciliation_settings')
+    .select('*')
+    .single();
+  
+  const settings: ReconciliationSettings = settingsData || {
+    accuracy_threshold: 1.00,
+    stripe_fee_percent: 2.9,
+    stripe_fixed_fee: 0.30
+  };
 
-  const failures: string[] = [];
+  // 2. Fetch data
+  const [pendingLedger, pendingSystem] = await Promise.all([
+    fetchAllTransactions('transactions', 'pending-ledger'),
+    fetchAllTransactions('kingdom_transactions', 'pending-ledger') // Assuming they use the same status name
+  ]);
 
-  if (dateMatch !== 100) {
-    failures.push(`Date mismatch: ${ledger.date} vs ${statement.date} (Required: same date, Got: ${dateMatch}%)`);
+  console.log(`Matching ${pendingLedger.length} ledger items against ${pendingSystem.length} system items...`);
+
+  const matches: any[] = [];
+  const details: MatchDetail[] = [];
+  
+  // Index system transactions for faster lookup
+  const systemIndex = createLookupIndex(pendingSystem as any);
+
+  for (const ledgerTrans of pendingLedger) {
+    const dateObj = new Date(ledgerTrans.date);
+    const dateKey = dateObj.toISOString().split('T')[0];
+    const valueVal = Math.abs(typeof ledgerTrans.value === 'string' ? parseFloat(ledgerTrans.value) : ledgerTrans.value);
+    const valueKey = Math.round(valueVal * 100);
+    const methodKey = (ledgerTrans.payment_method || '').toLowerCase().trim();
+
+    const key = `${dateKey}|${valueKey}|${methodKey}`;
+    const candidates = systemIndex.get(key) || [];
+    
+    let bestMatch = null;
+    if (candidates.length > 0) {
+      // Find best name match among candidates with same date/value/method
+      let maxScore = -1;
+      for (const candidate of candidates) {
+        const score = checkNameMatch(ledgerTrans, candidate);
+        if (score > maxScore) {
+          maxScore = score;
+          bestMatch = candidate;
+        }
+      }
+    }
+
+    if (bestMatch) {
+      const gap = valueVal - Math.abs(parseFloat(bestMatch.value));
+      const confidence = checkNameMatch(ledgerTrans, bestMatch);
+      
+      matches.push({
+        ledger_id: ledgerTrans.id,
+        target_id: bestMatch.id,
+        type: 'SYSTEM',
+        gap_amount: gap,
+        confidence_score: confidence,
+        is_confirmed: confidence >= 100 && Math.abs(gap) < 0.01
+      });
+
+      // Remove from index to avoid double matching
+      const filtered = (systemIndex.get(key) || []).filter(c => c.id !== bestMatch.id);
+      if (filtered.length > 0) systemIndex.set(key, filtered);
+      else systemIndex.delete(key);
+    }
   }
 
-  if (valueMatch !== 100) {
-    failures.push(`Value mismatch: ${ledger.value} vs ${statement.value} (Required: 100%, Got: ${valueMatch}%)`);
+  // Batch insert links
+  if (matches.length > 0) {
+    const BATCH_SIZE = 100;
+    for (let i = 0; i < matches.length; i += BATCH_SIZE) {
+      const batch = matches.slice(i, i + BATCH_SIZE);
+      await supabase.from('reconciliation_links').insert(batch);
+    }
   }
-
-  if (paymentMethodMatch !== 100) {
-    failures.push(`Payment method mismatch: ${ledger.payment_method} vs ${statement.payment_method} (Required: 100%, Got: ${paymentMethodMatch}%)`);
-  }
-
-  // For credit card transactions, skip name matching requirement
-  const isCreditCard =
-    ledger.payment_method?.toLowerCase().includes('credit card') ||
-    statement.payment_method?.toLowerCase().includes('credit card');
-
-  if (!isCreditCard && nameMatch < 50) {
-    failures.push(`Name similarity too low: (Required: ≥50%, Got: ${nameMatch}%)`);
-  }
-
-  const overallStatus = failures.length === 0 ? 'CORRECT' : 'INCORRECT';
 
   return {
-    ledgerTransaction: ledger,
-    statementTransaction: statement,
-    dateMatch,
-    valueMatch,
-    paymentMethodMatch,
-    nameMatch,
-    overallStatus,
-    failures
+    matched: matches.length,
+    totalProcessed: pendingLedger.length,
+    details: []
   };
 }
 
@@ -181,18 +232,29 @@ export async function findMatchForTransactionOptimized(
       const evaluation = evaluateReconciliation(transaction, candidate);
 
       if (evaluation.overallStatus === 'CORRECT') {
-        console.log(`✓ CORRECT Match found:`, {
-          ledger: `${transaction.name || transaction.depositor} - $${transaction.value} - ${transaction.date}`,
-          statement: `${candidate.name || candidate.depositor} - $${candidate.value} - ${candidate.date}`,
-          scores: {
-            date: `${evaluation.dateMatch}%`,
-            value: `${evaluation.valueMatch}%`,
-            paymentMethod: `${evaluation.paymentMethodMatch}%`,
-            name: `${evaluation.nameMatch}%`
-          }
-        });
         return candidate;
       }
+    }
+  }
+
+  // Stripe Fee matching logic (1-to-1)
+  const isCreditCard = (transaction.payment_method || '').toLowerCase().includes('credit card');
+  if (isCreditCard) {
+    const { data: settings } = await supabase.from('reconciliation_settings').select('*').single();
+    const feePercent = parseFloat(settings?.stripe_fee_percent || '2.9') / 100;
+    const fixedFee = parseFloat(settings?.stripe_fixed_fee || '0.30');
+    
+    const val = Math.abs(typeof transaction.value === 'string' ? parseFloat(transaction.value) : transaction.value);
+    const expectedNet = val - (val * feePercent + fixedFee);
+    const expectedNetKey = Math.round(expectedNet * 100);
+
+    const dateKey = transDate.toISOString().split('T')[0];
+    const key = `${dateKey}|${expectedNetKey}|wells fargo`; // Or other bank source
+    
+    const candidates = candidatesIndex.get(key) || [];
+    for (const candidate of candidates) {
+      if (candidate.matched_transaction_id) continue;
+      return candidate; // Match found via Stripe fees!
     }
   }
 
@@ -382,32 +444,29 @@ export async function autoReconcileAllOptimized(tableName: 'transactions' | 'kin
     for (let i = 0; i < matches.length; i += BATCH_SIZE) {
       const batch = matches.slice(i, i + BATCH_SIZE);
 
-      // Use Promise.all for parallel updates
-      // Using any to work around Supabase TypeScript strict checking with dynamic table names
-      const updates = await Promise.all(
-        batch.flatMap(({ ledgerId, statementId }) => [
-          (supabase as any)
-            .from(tableName)
-            .update({
-              status: 'reconciled',
-              matched_transaction_id: statementId,
-              confidence: 100,
-            })
-            .eq('id', ledgerId),
-          (supabase as any)
-            .from(tableName)
-            .update({
-              status: 'reconciled',
-              matched_transaction_id: ledgerId,
-              confidence: 100,
-            })
-            .eq('id', statementId)
-        ])
-      );
+      // 1. Insert links
+      const links = batch.map(({ ledgerId, statementId }) => ({
+        ledger_id: ledgerId,
+        target_id: statementId,
+        type: 'STATEMENT',
+        confidence_score: 100,
+        is_confirmed: true
+      }));
+      
+      const { error: linkError } = await supabase.from('reconciliation_links').insert(links);
+      
+      // 2. Update statuses
+      const ledgerIds = batch.map(m => m.ledgerId);
+      const statementIds = batch.map(m => m.statementId);
 
-      // Count successful updates (each match has 2 updates)
-      const successful = updates.filter(r => !r.error).length / 2;
-      matched += successful;
+      const [ledgerUpdate, statementUpdate] = await Promise.all([
+        supabase.from('transactions').update({ status: 'reconciled' }).in('id', ledgerIds),
+        supabase.from('transactions').update({ status: 'reconciled' }).in('id', statementIds)
+      ]);
+
+      if (!linkError && !ledgerUpdate.error && !statementUpdate.error) {
+        matched += batch.length;
+      }
     }
   }
 

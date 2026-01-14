@@ -4,14 +4,16 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { X, AlertCircle } from 'lucide-react';
+import { X, AlertCircle, Unlink, Link as LinkIcon, Loader2 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import type { Transaction } from '@/lib/database.types';
+import { queryClient } from '@/lib/queryClient';
+import { toast } from '@/components/ui/toast';
 
 interface UnreconcileTransactionModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onConfirm: (reason: string) => void;
+  onConfirm: (reason: string) => void; // Keep for legacy if needed, but we'll use a new flow
   transaction: Transaction | null;
 }
 
@@ -35,51 +37,61 @@ export function UnreconcileTransactionModal({
   transaction,
 }: UnreconcileTransactionModalProps) {
   const [reason, setReason] = useState('');
-  const [showConfirmation, setShowConfirmation] = useState(false);
+  const [isDeleting, setIsDeleting] = useState<string | null>(null);
 
-  // Fetch matched transaction details for preview
-  const { data: matchedTransaction, isLoading } = useQuery<Transaction | null>({
-    queryKey: ['matched-transaction', transaction?.matched_transaction_id],
+  // Fetch active reconciliation links for this transaction
+  const { data: links, isLoading: loadingLinks } = useQuery({
+    queryKey: ['reconciliation-links', transaction?.id],
     queryFn: async () => {
-      if (!transaction?.matched_transaction_id) return null;
-
+      if (!transaction) return [];
       const { data, error } = await supabase
-        .from('transactions')
+        .from('reconciliation_links')
         .select('*')
-        .eq('id', transaction.matched_transaction_id)
-        .single();
-
+        .or(`ledger_id.eq.${transaction.id},target_id.eq.${transaction.id}`);
       if (error) throw error;
       return data;
     },
-    enabled: isOpen && !!transaction?.matched_transaction_id,
+    enabled: isOpen && !!transaction,
   });
+
+  const breakLink = async (linkId: string, type: string) => {
+    setIsDeleting(linkId);
+    try {
+      // 1. Delete the link
+      const { error: deleteError } = await supabase
+        .from('reconciliation_links')
+        .delete()
+        .eq('id', linkId);
+      if (deleteError) throw deleteError;
+
+      // 2. If it was a Stripe Payout or Statement match, we might need to reset transaction statuses
+      // For now, let's keep it simple and just invalidate queries
+      // In a more complex system, we'd check if the transaction has ANY other links left
+
+      queryClient.invalidateQueries({ queryKey: ['transactions'] });
+      queryClient.invalidateQueries({ queryKey: ['system-audit'] });
+      queryClient.invalidateQueries({ queryKey: ['reconciliation-links'] });
+      
+      toast({
+        title: 'Link broken',
+        description: `The ${type} reconciliation link has been removed.`,
+      });
+    } catch (error: any) {
+      toast({
+        title: 'Error',
+        description: error.message,
+        variant: 'destructive',
+      });
+    } finally {
+      setIsDeleting(null);
+    }
+  };
 
   if (!isOpen || !transaction) return null;
 
-  const handleNext = () => {
-    if (!showConfirmation && reason.trim()) {
-      setShowConfirmation(true);
-    }
-  };
-
-  const handleConfirm = () => {
-    if (reason.trim()) {
-      onConfirm(reason.trim());
-      setReason('');
-      setShowConfirmation(false);
-      onClose();
-    }
-  };
-
   const handleClose = () => {
     setReason('');
-    setShowConfirmation(false);
     onClose();
-  };
-
-  const getOriginalStatus = (source: string) => {
-    return source.startsWith('Google Sheets') ? 'pending-ledger' : 'pending-statement';
   };
 
   return (
@@ -92,166 +104,75 @@ export function UnreconcileTransactionModal({
       <Card className="w-full max-w-[95vw] sm:max-w-2xl p-4 sm:p-6 space-y-4 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between">
           <h2 id="unreconcile-transaction-title" className="text-xl font-semibold">
-            Unreconcile Transaction
+            Manage Reconciliation Links
           </h2>
           <Button
             variant="ghost"
             size="icon"
             onClick={handleClose}
-            aria-label="Close modal"
           >
             <X className="h-4 w-4" />
           </Button>
         </div>
 
-        {!showConfirmation && (
-          <>
-            <div className="bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 p-3 rounded-md flex gap-3">
-              <AlertCircle className="h-5 w-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
-              <div className="text-sm text-amber-900 dark:text-amber-100">
-                <div className="font-medium mb-1">This action will:</div>
-                <ul className="list-disc list-inside space-y-1 text-amber-800 dark:text-amber-200">
-                  <li>Reverse the reconciliation between these two transactions</li>
-                  <li>Set both transactions back to their original pending status</li>
-                  <li>Automatically revert any linked Dealer Receivables to 'pending' if needed</li>
-                  <li>Create an audit record of this action</li>
-                </ul>
-              </div>
-            </div>
+        <div className="bg-muted/30 p-4 rounded-lg border space-y-1">
+          <div className="text-xs text-muted-foreground uppercase font-semibold">Selected Transaction</div>
+          <div className="flex justify-between items-center">
+            <span className="font-medium">{transaction.name || transaction.depositor || 'N/A'}</span>
+            <span className="font-mono font-bold">{formatCurrency(transaction.value)}</span>
+          </div>
+          <div className="text-xs text-muted-foreground">{formatDate(transaction.date)} • {transaction.source}</div>
+        </div>
 
-            {/* Transaction Preview */}
-            <div className="space-y-3">
-              <h3 className="text-sm font-semibold text-muted-foreground">Selected Transaction</h3>
-              <div className="bg-muted p-3 rounded-md">
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
-                  <div>
-                    <div className="text-xs text-muted-foreground">Date</div>
-                    <div className="font-medium">{formatDate(transaction.date)}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-muted-foreground">Name</div>
-                    <div className="font-medium truncate">
-                      {transaction.name || transaction.depositor || '—'}
+        <div className="space-y-4">
+          <h3 className="text-sm font-semibold flex items-center gap-2">
+            <LinkIcon className="h-4 w-4 text-blue-500" />
+            Active Audit Links
+          </h3>
+
+          {loadingLinks ? (
+            <div className="flex justify-center p-8"><Loader2 className="h-6 w-6 animate-spin" /></div>
+          ) : links?.length === 0 ? (
+            <div className="text-center p-8 border-2 border-dashed rounded-lg text-muted-foreground italic">
+              No active reconciliation links found for this transaction.
+            </div>
+          ) : (
+            <div className="grid gap-3">
+              {links?.map((link) => (
+                <div key={link.id} className="flex items-center justify-between p-4 border rounded-lg bg-card hover:bg-muted/10 transition-colors">
+                  <div className="space-y-1">
+                    <Badge variant="secondary">
+                      {link.type === 'SYSTEM' ? 'Kingdom CRM Audit' : link.type === 'STRIPE_PAYOUT' ? 'Stripe Payout Batch' : 'Bank Statement Match'}
+                    </Badge>
+                    <div className="text-xs text-muted-foreground">
+                      Gap: {formatCurrency(link.gap_amount)} • Confidence: {link.confidence_score}%
                     </div>
                   </div>
-                  <div>
-                    <div className="text-xs text-muted-foreground">Amount</div>
-                    <div className="font-medium">{formatCurrency(transaction.value)}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-muted-foreground">Source</div>
-                    <div className="font-medium text-xs truncate">{transaction.source}</div>
-                  </div>
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    className="text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700"
+                    onClick={() => breakLink(link.id, link.type)}
+                    disabled={!!isDeleting}
+                  >
+                    {isDeleting === link.id ? (
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    ) : (
+                      <Unlink className="h-4 w-4 mr-2" />
+                    )}
+                    Break Link
+                  </Button>
                 </div>
-                <div className="mt-2 flex items-center gap-2">
-                  <span className="text-xs text-muted-foreground">Will revert to:</span>
-                  <Badge className="bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
-                    {getOriginalStatus(transaction.source)}
-                  </Badge>
-                </div>
-              </div>
+              ))}
+            </div>
+          )}
+        </div>
 
-              {isLoading && (
-                <div className="text-sm text-muted-foreground text-center py-3">
-                  Loading matched transaction...
-                </div>
-              )}
-
-              {matchedTransaction && (
-                <>
-                  <h3 className="text-sm font-semibold text-muted-foreground">Matched Transaction</h3>
-                  <div className="bg-muted p-3 rounded-md">
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
-                      <div>
-                        <div className="text-xs text-muted-foreground">Date</div>
-                        <div className="font-medium">{formatDate(matchedTransaction.date)}</div>
-                      </div>
-                      <div>
-                        <div className="text-xs text-muted-foreground">Name</div>
-                        <div className="font-medium truncate">
-                          {matchedTransaction.name || matchedTransaction.depositor || '—'}
-                        </div>
-                      </div>
-                      <div>
-                        <div className="text-xs text-muted-foreground">Amount</div>
-                        <div className="font-medium">{formatCurrency(matchedTransaction.value)}</div>
-                      </div>
-                      <div>
-                        <div className="text-xs text-muted-foreground">Source</div>
-                        <div className="font-medium text-xs truncate">{matchedTransaction.source}</div>
-                      </div>
-                    </div>
-                    <div className="mt-2 flex items-center gap-2">
-                      <span className="text-xs text-muted-foreground">Will revert to:</span>
-                      <Badge className="bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200">
-                        {getOriginalStatus(matchedTransaction.source)}
-                      </Badge>
-                    </div>
-                  </div>
-                </>
-              )}
-            </div>
-
-            <div className="space-y-2">
-              <label htmlFor="unreconcile-reason" className="text-sm font-medium">
-                Reason for Unreconciling *
-              </label>
-              <Input
-                id="unreconcile-reason"
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                placeholder="e.g., Incorrect match - dates don't align properly"
-                className="w-full"
-                autoFocus
-              />
-              <p className="text-xs text-muted-foreground">
-                This reason will be stored in the audit log and used for tracking purposes.
-              </p>
-            </div>
-
-            <div className="flex gap-2 justify-end">
-              <Button variant="outline" onClick={handleClose}>
-                Cancel
-              </Button>
-              <Button
-                variant="destructive"
-                onClick={handleNext}
-                disabled={!reason.trim()}
-              >
-                Next
-              </Button>
-            </div>
-          </>
-        )}
-
-        {showConfirmation && (
-          <>
-            <p className="text-sm text-muted-foreground">
-              Are you sure you want to unreconcile these transactions?
-            </p>
-            <div className="bg-muted p-3 rounded-md">
-              <p className="text-sm font-medium mb-1">Reason:</p>
-              <p className="text-sm">{reason}</p>
-            </div>
-            <div className="bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 p-3 rounded-md">
-              <p className="text-sm text-red-900 dark:text-red-100">
-                <strong>Warning:</strong> This will break the reconciliation link and both transactions
-                will need to be reconciled again if this was done in error.
-              </p>
-            </div>
-            <div className="flex gap-2 justify-end">
-              <Button
-                variant="outline"
-                onClick={() => setShowConfirmation(false)}
-              >
-                Back
-              </Button>
-              <Button variant="destructive" onClick={handleConfirm}>
-                Confirm Unreconcile
-              </Button>
-            </div>
-          </>
-        )}
+        <div className="pt-4 flex justify-end">
+          <Button variant="outline" onClick={handleClose}>
+            Close
+          </Button>
+        </div>
       </Card>
     </div>
   );

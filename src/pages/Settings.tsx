@@ -1,4 +1,4 @@
-import { FileSpreadsheet, Moon, Sun, Upload, Link as LinkIcon } from 'lucide-react';
+import { FileSpreadsheet, Moon, Sun, Upload, Link as LinkIcon, Settings as SettingsIcon } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import {
@@ -12,6 +12,7 @@ import { BankUpload } from '@/components/BankUpload';
 import { CardUpload } from '@/components/CardUpload';
 import { KingdomUpload } from '@/components/KingdomUpload';
 import { DealerReceivablesUpload } from '@/components/DealerReceivablesUpload';
+import { ReconciliationRules } from '@/components/ReconciliationRules';
 import { useTheme } from '@/lib/useTheme';
 
 export default function Settings() {
@@ -27,6 +28,24 @@ export default function Settings() {
       </div>
 
       <Accordion type="multiple" defaultValue={[]} className="space-y-4">
+        {/* Reconciliation Rules Section */}
+        <AccordionItem value="reconciliation-rules" className="border rounded-lg bg-card">
+          <AccordionTrigger className="px-6 hover:no-underline">
+            <div className="flex items-center gap-3">
+              <SettingsIcon className="h-5 w-5" />
+              <div className="text-left">
+                <h2 className="text-base font-semibold">Reconciliation Rules</h2>
+                <p className="text-sm text-muted-foreground font-normal">
+                  Define thresholds and fee structures for smart matching
+                </p>
+              </div>
+            </div>
+          </AccordionTrigger>
+          <AccordionContent className="px-6">
+            <ReconciliationRules />
+          </AccordionContent>
+        </AccordionItem>
+
         {/* Appearance Section */}
         <AccordionItem value="appearance" className="border rounded-lg bg-card">
           <AccordionTrigger className="px-6 hover:no-underline">

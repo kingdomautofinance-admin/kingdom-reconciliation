@@ -185,98 +185,112 @@ export interface Database {
           created_at?: string
         }
       }
-      sheet_connections: {
+      kingdom_transactions: {
         Row: {
           id: string
-          user_id: string | null
-          spreadsheet_id: string
-          spreadsheet_url: string
-          spreadsheet_name: string | null
-          access_token: string | null
-          refresh_token: string | null
-          token_expires_at: string | null
-          service_account_email: string | null
-          service_account_key: string | null
-          google_client_id: string | null
-          google_api_key: string | null
-          is_active: boolean
-          last_sync_at: string | null
-          last_sync_records: number
+          date: string
+          value: string
+          name: string | null
+          depositor: string | null
+          car: string | null
+          payment_method: string | null
+          historical_text: string | null
+          source: string
+          status: string
+          confidence: number | null
+          matched_transaction_id: string | null
+          duplicate_check_hash: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          date: string
+          value: string
+          name?: string | null
+          depositor?: string | null
+          car?: string | null
+          payment_method?: string | null
+          historical_text?: string | null
+          source: string
+          status?: string
+          confidence?: number | null
+          matched_transaction_id?: string | null
+          duplicate_check_hash?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          date?: string
+          value?: string
+          name?: string | null
+          depositor?: string | null
+          car?: string | null
+          payment_method?: string | null
+          historical_text?: string | null
+          source?: string
+          status?: string
+          confidence?: number | null
+          matched_transaction_id?: string | null
+          duplicate_check_hash?: string | null
+          created_at?: string
+        }
+      }
+      reconciliation_links: {
+        Row: {
+          id: string
+          ledger_id: string
+          target_id: string
+          type: string
+          gap_amount: string
+          confidence_score: number
+          is_confirmed: boolean
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          ledger_id: string
+          target_id: string
+          type: string
+          gap_amount?: string
+          confidence_score?: number
+          is_confirmed?: boolean
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          ledger_id?: string
+          target_id?: string
+          type?: string
+          gap_amount?: string
+          confidence_score?: number
+          is_confirmed?: boolean
+          created_at?: string
+        }
+      }
+      reconciliation_settings: {
+        Row: {
+          id: string
+          accuracy_threshold: string
+          stripe_fee_percent: string
+          stripe_fixed_fee: string
           created_at: string
           updated_at: string
         }
         Insert: {
           id?: string
-          user_id?: string | null
-          spreadsheet_id?: string
-          spreadsheet_url?: string
-          spreadsheet_name?: string | null
-          access_token?: string | null
-          refresh_token?: string | null
-          token_expires_at?: string | null
-          service_account_email?: string | null
-          service_account_key?: string | null
-          google_client_id?: string | null
-          google_api_key?: string | null
-          is_active?: boolean
-          last_sync_at?: string | null
-          last_sync_records?: number
+          accuracy_threshold?: string
+          stripe_fee_percent?: string
+          stripe_fixed_fee?: string
           created_at?: string
           updated_at?: string
         }
         Update: {
           id?: string
-          user_id?: string | null
-          spreadsheet_id?: string
-          spreadsheet_url?: string
-          spreadsheet_name?: string | null
-          access_token?: string | null
-          refresh_token?: string | null
-          token_expires_at?: string | null
-          service_account_email?: string | null
-          service_account_key?: string | null
-          google_client_id?: string | null
-          google_api_key?: string | null
-          is_active?: boolean
-          last_sync_at?: string | null
-          last_sync_records?: number
+          accuracy_threshold?: string
+          stripe_fee_percent?: string
+          stripe_fixed_fee?: string
           created_at?: string
           updated_at?: string
-        }
-      }
-      unreconcile_history: {
-        Row: {
-          id: string
-          transaction1_id: string
-          transaction2_id: string
-          reason: string
-          unreconciled_by: string | null
-          unreconciled_at: string
-          transaction1_previous_status: string
-          transaction2_previous_status: string
-          created_at: string
-        }
-        Insert: {
-          id?: string
-          transaction1_id: string
-          transaction2_id: string
-          reason: string
-          unreconciled_by?: string | null
-          unreconciled_at?: string
-          transaction1_previous_status: string
-          transaction2_previous_status: string
-          created_at?: string
-        }
-        Update: {
-          id?: string
-          transaction1_id?: string
-          transaction2_id?: string
-          reason?: string
-          unreconciled_by?: string | null
-          unreconciled_at?: string
-          transaction1_previous_status?: string
-          transaction2_previous_status?: string
-          created_at?: string
         }
       }
       transactions: {
@@ -372,5 +386,17 @@ export type UpdateTransaction = Database['public']['Tables']['transactions']['Up
 export type UnreconcileHistory = Database['public']['Tables']['unreconcile_history']['Row'];
 export type InsertUnreconcileHistory = Database['public']['Tables']['unreconcile_history']['Insert'];
 export type UpdateUnreconcileHistory = Database['public']['Tables']['unreconcile_history']['Update'];
+
+export type ReconciliationLink = Database['public']['Tables']['reconciliation_links']['Row'];
+export type InsertReconciliationLink = Database['public']['Tables']['reconciliation_links']['Insert'];
+export type UpdateReconciliationLink = Database['public']['Tables']['reconciliation_links']['Update'];
+
+export type ReconciliationSettings = Database['public']['Tables']['reconciliation_settings']['Row'];
+export type InsertReconciliationSettings = Database['public']['Tables']['reconciliation_settings']['Insert'];
+export type UpdateReconciliationSettings = Database['public']['Tables']['reconciliation_settings']['Update'];
+
+export type KingdomTransaction = Database['public']['Tables']['kingdom_transactions']['Row'];
+export type InsertKingdomTransaction = Database['public']['Tables']['kingdom_transactions']['Insert'];
+export type UpdateKingdomTransaction = Database['public']['Tables']['kingdom_transactions']['Update'];
 
 export type ReconciliationStatus = 'reconciled' | 'pending-ledger' | 'pending-statement';

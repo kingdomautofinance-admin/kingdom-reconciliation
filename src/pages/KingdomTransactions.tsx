@@ -1,159 +1,50 @@
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
-import { useState, useRef, useMemo, useEffect, type RefObject } from 'react';
-import { useLocation } from 'wouter';
+import { useState, useMemo, useRef, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
-import type { Transaction, ReconciliationStatus } from '@/lib/database.types';
-import { queryClient } from '@/lib/queryClient';
+import { formatCurrency, formatDate } from '@/lib/utils';
 import { Card } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
-import { Eye, Search, CheckCircle2, Loader2, Link2, Calendar, Trash2, Pencil } from 'lucide-react';
-import { SortableHeader } from '@/components/ui/SortableHeader';
-import { type SortConfig, getNextSortState } from '@/lib/sorting';
-import {
-  formatDate,
-  formatCurrency,
-  parseUSDateToISO,
-  formatUSDateInput,
-  formatISODateToUS,
-} from '@/lib/utils';
-import { autoReconcileAll } from '@/lib/reconciliation';
-import { fetchPreferredMinTransactionDate } from '@/lib/transactionFilters';
-import { DeleteTransactionModal } from '@/components/DeleteTransactionModal';
-import { EditTransactionModal } from '@/components/EditTransactionModal';
-import { useToast } from '@/components/ui/toast';
-import { useColumnResizer } from '@/hooks/useColumnResizer';
-import { ResizeHandle } from '@/components/ui/ResizeHandle';
+import { AlertCircle, CheckCircle2, Loader2, Search } from 'lucide-react';
+import { toast } from '@/components/ui/toast';
+import { queryClient } from '@/lib/queryClient';
 
-const TRANSACTIONS_PER_PAGE = 50;
-const DEFAULT_COLUMN_WIDTHS = ['100px', '1fr', '180px', '100px', '100px', '100px', '80px', '140px'];
+const AUDIT_PER_PAGE = 50;
 
-type KingdomSortColumn = 'date' | 'name' | 'car' | 'payment_method' | 'value' | 'status' | 'confidence';
-
-const escapeForIlike = (term: string) =>
-  term.replace(/([*\\])/g, '\\$1').replace(/,/g, '\\,').replace(/_/g, '\\_').replace(/%/g, '\\%');
-
-const buildAmountCondition = (rawTerm: string) => {
-  const digitsOnly = rawTerm.replace(/[^\d.-]/g, '');
-  if (!digitsOnly) return null;
-  const numericValue = Number(digitsOnly);
-  if (Number.isNaN(numericValue)) return null;
-  return `value.eq.${encodeURIComponent(numericValue.toString())}`;
-};
+interface AuditRow {
+  ledger_id: string;
+  ledger_date: string;
+  ledger_value: string;
+  ledger_name: string;
+  ledger_source: string;
+  system_id: string | null;
+  system_date: string | null;
+  system_value: string | null;
+  gap_amount: string | null;
+  confidence_score: number | null;
+  is_confirmed: boolean | null;
+  link_id: string | null;
+}
 
 export default function KingdomTransactions() {
-  const { showToast } = useToast();
-  const [location] = useLocation();
-
-  const { widths, updateWidth, gridTemplateColumns } = useColumnResizer('kingdom-transactions-grid-cols', DEFAULT_COLUMN_WIDTHS);
-
-  const urlParams = useMemo(() => new URLSearchParams(location.split('?')[1] || ''), [location]);
-  const initialSearch = urlParams.get('q') || '';
   const [searchTerm, setSearchTerm] = useState('');
-  const [sortConfig, setSortConfig] = useState<SortConfig<KingdomSortColumn>>({ column: 'date', direction: 'desc' });
-  const [statusFilter, setStatusFilter] = useState<ReconciliationStatus | 'all' | 'kingdom' | 'deleted'>('all');
-  const [selectedForMatch, setSelectedForMatch] = useState<Transaction | null>(null);
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
-  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
-  const [deleteModalMode, setDeleteModalMode] = useState<'delete' | 'view'>('delete');
-  const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
-  const [editModalOpen, setEditModalOpen] = useState(false);
-  const [transactionToEdit, setTransactionToEdit] = useState<Transaction | null>(null);
+  const [statusFilter, setStatusFilter] = useState<'all' | 'mismatch' | 'perfect' | 'unmatched'>('all');
   const observerTarget = useRef<HTMLDivElement>(null);
-  const dateFromPickerRef = useRef<HTMLInputElement>(null);
-  const dateToPickerRef = useRef<HTMLInputElement>(null);
-  const openDatePicker = (ref: RefObject<HTMLInputElement>) => {
-    const input = ref.current;
-    if (input && typeof input.showPicker === 'function') {
-      input.showPicker();
-    }
-  };
-  const handleStatusFilterChange = (nextFilter: ReconciliationStatus | 'all' | 'kingdom' | 'deleted') => {
-    setStatusFilter(nextFilter);
-    void queryClient.invalidateQueries({ queryKey: ['kingdom-transactions', 'infinite'] });
-    void queryClient.invalidateQueries({ queryKey: ['kingdom-transaction-counts'] });
-  };
 
-  const handleSort = (column: KingdomSortColumn) => {
-    setSortConfig(getNextSortState(sortConfig, column));
-  };
-
-  const normalizeDateInput = (value: string) => {
-    if (!value || value.length !== 10) return undefined;
-    const iso = parseUSDateToISO(value);
-    return iso || undefined;
-  };
-
-  const normalizedSearchInput = useMemo(() => searchTerm.trim(), [searchTerm]);
-  const pendingIsoDateFrom = useMemo(() => normalizeDateInput(dateFrom), [dateFrom]);
-  const pendingIsoDateTo = useMemo(() => normalizeDateInput(dateTo), [dateTo]);
-
-  const [appliedSearchTerm, setAppliedSearchTerm] = useState('');
-  const [appliedIsoDateFrom, setAppliedIsoDateFrom] = useState<string | undefined>(undefined);
-  const [appliedIsoDateTo, setAppliedIsoDateTo] = useState<string | undefined>(undefined);
-
-  const filtersChanged =
-    normalizedSearchInput !== appliedSearchTerm ||
-    pendingIsoDateFrom !== appliedIsoDateFrom ||
-    pendingIsoDateTo !== appliedIsoDateTo;
-
-  const hasActiveFilters = Boolean(appliedSearchTerm || appliedIsoDateFrom || appliedIsoDateTo);
-
-  useEffect(() => {
-    if (initialSearch) {
-      setSearchTerm(initialSearch);
-      setAppliedSearchTerm(initialSearch.trim());
-    }
-  }, [initialSearch]);
-
-  const handleApplyFilters = () => {
-    setAppliedSearchTerm(normalizedSearchInput);
-    setAppliedIsoDateFrom(pendingIsoDateFrom);
-    setAppliedIsoDateTo(pendingIsoDateTo);
-  };
-
-  const handleClearFilters = () => {
-    setSearchTerm('');
-    setDateFrom('');
-    setDateTo('');
-    setAppliedSearchTerm('');
-    setAppliedIsoDateFrom(undefined);
-    setAppliedIsoDateTo(undefined);
-  };
-
-  const toNextDay = (isoDate: string) => {
-    const [year, month, day] = isoDate.split('-').map(Number);
-    if (!year || !month || !day) return isoDate;
-    const next = new Date(Date.UTC(year, month - 1, day + 1));
-    return next.toISOString().slice(0, 10);
-  };
-
-  const {
-    data: preferredMinDate,
-    isLoading: isLoadingPreferredMinDate,
-    isError: isPreferredMinDateError,
-  } = useQuery({
-    queryKey: ['preferred-min-transaction-date'],
-    queryFn: fetchPreferredMinTransactionDate,
-    staleTime: 5 * 60 * 1000,
+  const { data: settings } = useQuery({
+    queryKey: ['reconciliation-settings'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('reconciliation_settings')
+        .select('*')
+        .single();
+      if (error && error.code !== 'PGRST116') throw error;
+      return data || { accuracy_threshold: 1.00 };
+    },
   });
 
-  const minDate = preferredMinDate ?? undefined;
-
-  const effectiveStartDate = useMemo(() => {
-    if (!appliedIsoDateFrom) return undefined;
-    if (!minDate) return appliedIsoDateFrom;
-    return appliedIsoDateFrom < minDate ? minDate : appliedIsoDateFrom;
-  }, [appliedIsoDateFrom, minDate]);
-
-  const effectiveEndExclusive = useMemo(() => {
-    if (!appliedIsoDateTo) return undefined;
-    return toNextDay(appliedIsoDateTo);
-  }, [appliedIsoDateTo]);
-
-  const canRunQueries = !isLoadingPreferredMinDate || isPreferredMinDateError;
+  const threshold = parseFloat(settings?.accuracy_threshold?.toString() || '1.00');
 
   const {
     data,
@@ -161,309 +52,54 @@ export default function KingdomTransactions() {
     hasNextPage,
     isFetchingNextPage,
     isLoading,
-  } = useInfiniteQuery<Transaction[]>({
-    queryKey: ['kingdom-transactions', 'infinite', statusFilter, appliedSearchTerm, effectiveStartDate ?? null, appliedIsoDateTo ?? null, minDate ?? null, sortConfig.column, sortConfig.direction],
+  } = useInfiniteQuery<AuditRow[]>({
+    queryKey: ['system-audit', statusFilter, searchTerm],
     queryFn: async ({ pageParam = 0 }) => {
       const start = pageParam as number;
-      const end = start + TRANSACTIONS_PER_PAGE - 1;
+      const end = start + AUDIT_PER_PAGE - 1;
 
       let query = supabase
-        .from('transactions')
+        .from('system_audit_view')
         .select('*')
-        .order(sortConfig.column, { ascending: sortConfig.direction === 'asc', nullsFirst: false })
-        .order('sheet_order', { ascending: false, nullsFirst: false });
+        .order('ledger_date', { ascending: false });
 
-      if (effectiveStartDate) {
-        query = query.gte('date', effectiveStartDate);
+      if (searchTerm) {
+        query = query.or(`ledger_name.ilike.%${searchTerm}%,ledger_source.ilike.%${searchTerm}%`);
       }
 
-      if (statusFilter === 'deleted') {
-        query = query.eq('is_deleted', true);
-      } else if (statusFilter === 'kingdom') {
-        query = query.ilike('source', 'Kingdom System%').eq('is_deleted', false);
-      } else if (statusFilter !== 'all') {
-        query = query.eq('status', statusFilter).eq('is_deleted', false);
-      } else {
-        // For 'all', we don't filter by is_deleted to show everything
-      }
-
-      if (effectiveEndExclusive) {
-        query = query.lt('date', effectiveEndExclusive);
-      }
-
-      if (appliedSearchTerm) {
-        // Build OR conditions for searching across multiple columns
-        // The .or() method automatically wraps conditions in parentheses
-        const sanitizedTerm = escapeForIlike(appliedSearchTerm);
-        const searchPattern = `*${sanitizedTerm}*`;
-        const orConditions = [
-          `name.ilike.${searchPattern}`,
-          `depositor.ilike.${searchPattern}`,
-          `car.ilike.${searchPattern}`,
-          `historical_text.ilike.${searchPattern}`,
-          `source.ilike.${searchPattern}`,
-        ];
-
-        const amountCondition = buildAmountCondition(appliedSearchTerm);
-        if (amountCondition) {
-          orConditions.push(amountCondition);
-        }
-        
-        query = query.or(orConditions.join(','));
+      if (statusFilter === 'mismatch') {
+        query = query.not('gap_amount', 'eq', 0).not('gap_amount', 'is', null);
+      } else if (statusFilter === 'perfect') {
+        query = query.eq('gap_amount', 0);
+      } else if (statusFilter === 'unmatched') {
+        query = query.is('system_id', null);
       }
 
       const { data, error } = await query.range(start, end);
-
       if (error) throw error;
-      return data || [];
+      return data as AuditRow[];
     },
     getNextPageParam: (lastPage, allPages) => {
-      if (lastPage.length < TRANSACTIONS_PER_PAGE) return undefined;
-      return allPages.length * TRANSACTIONS_PER_PAGE;
+      return lastPage.length === AUDIT_PER_PAGE ? allPages.length * AUDIT_PER_PAGE : undefined;
     },
     initialPageParam: 0,
-    staleTime: 30000,
-    enabled: canRunQueries,
   });
 
-  const allTransactions = useMemo(() => data?.pages.flat() || [], [data?.pages]);
-
-  const { data: counts } = useQuery({
-    queryKey: ['kingdom-transaction-counts', effectiveStartDate ?? null, appliedIsoDateTo ?? null, minDate ?? null],
-    staleTime: 30000,
-    queryFn: async () => {
-      const buildCountQuery = (status?: string) => {
-        let query = supabase
-          .from('transactions')
-          .select('*', { count: 'exact', head: true });
-
-        if (status === 'kingdom') {
-          query = query.ilike('source', 'Kingdom System%').eq('is_deleted', false);
-        } else if (status && status !== 'all') {
-          query = query.eq('status', status).eq('is_deleted', false);
-        } else if (!status || status === 'all') {
-          query = query.eq('is_deleted', false);
-        }
-
-        if (effectiveStartDate) {
-          query = query.gte('date', effectiveStartDate);
-        }
-
-        if (effectiveEndExclusive) {
-          query = query.lt('date', effectiveEndExclusive);
-        }
-
-        return query;
-      };
-
-      const { count: totalCount, error: totalError } = await buildCountQuery();
-      const { count: reconciledCount, error: reconciledError } = await buildCountQuery('reconciled');
-      const { count: pendingLedgerCount, error: pendingLedgerError } = await buildCountQuery('pending-ledger');
-      const { count: pendingStatementCount, error: pendingStatementError } = await buildCountQuery('pending-statement');
-      const { count: kingdomCount, error: kingdomError } = await buildCountQuery('kingdom');
-      
-      // Count deleted transactions separately
-      let deletedQuery = supabase
-        .from('transactions')
-        .select('*', { count: 'exact', head: true })
-        .eq('is_deleted', true);
-      
-      if (effectiveStartDate) {
-        deletedQuery = deletedQuery.gte('date', effectiveStartDate);
-      }
-      if (effectiveEndExclusive) {
-        deletedQuery = deletedQuery.lt('date', effectiveEndExclusive);
-      }
-      
-      const { count: deletedCount, error: deletedError } = await deletedQuery;
-
-      if (totalError || reconciledError || pendingLedgerError || pendingStatementError || kingdomError || deletedError) {
-        throw totalError || reconciledError || pendingLedgerError || pendingStatementError || kingdomError || deletedError;
-      }
-
-      return {
-        all: totalCount || 0,
-        reconciled: reconciledCount || 0,
-        'pending-ledger': pendingLedgerCount || 0,
-        'pending-statement': pendingStatementCount || 0,
-        kingdom: kingdomCount || 0,
-        deleted: deletedCount || 0,
-      };
-    },
-    enabled: canRunQueries,
-  });
-
-  const filteredTransactions = useMemo(() => allTransactions, [allTransactions]);
-
-  const filteredTotal = useMemo(() => {
-    return filteredTransactions.reduce((sum, transaction) => {
-      // Exclude deleted transactions from totals unless viewing deleted filter
-      if (transaction.is_deleted && statusFilter !== 'deleted') {
-        return sum;
-      }
-      const rawValue = transaction.value;
-      const numeric = typeof rawValue === 'number'
-        ? rawValue
-        : parseFloat((rawValue ?? '0').toString().replace(/[^\d.-]/g, ''));
-      if (Number.isNaN(numeric)) {
-        return sum;
-      }
-      return sum + numeric;
-    }, 0);
-  }, [filteredTransactions, statusFilter]);
-
-  const manualReconcileMutation = useMutation({
-    mutationFn: async ({ transaction1, transaction2 }: { transaction1: Transaction; transaction2: Transaction }) => {
-      const { error: error1 } = await supabase
-        .from('transactions')
-        .update({
-          status: 'reconciled',
-          matched_transaction_id: transaction2.id,
-          confidence: 100,
-        } as any)
-        .eq('id', transaction1.id);
-
-      if (error1) throw error1;
-
-      const { error: error2 } = await supabase
-        .from('transactions')
-        .update({
-          status: 'reconciled',
-          matched_transaction_id: transaction1.id,
-          confidence: 100,
-        } as any)
-        .eq('id', transaction2.id);
-
-      if (error2) throw error2;
-
-      return { transaction1, transaction2 };
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['kingdom-transactions'] });
-      queryClient.invalidateQueries({ queryKey: ['kingdom-transaction-counts'] });
-      setSelectedForMatch(null);
-      showToast('Manual reconciliation successful!', 'success');
-    },
-    onError: (error) => {
-      showToast(`Manual reconciliation failed\n\n${error.message}`, 'error');
-      console.error('Manual reconcile error:', error);
-    },
-  });
-
-  const deleteTransactionMutation = useMutation({
-    mutationFn: async ({ transactionId, reason }: { transactionId: string; reason: string }) => {
-      // First, get the current status to store it
-      const { data: currentTransaction, error: fetchError } = await supabase
-        .from('transactions')
-        .select('status')
-        .eq('id', transactionId)
-        .single();
-
-      if (fetchError) throw fetchError;
-
+  const confirmMatchMutation = useMutation({
+    mutationFn: async (linkId: string) => {
       const { error } = await supabase
-        .from('transactions')
-        .update({
-          is_deleted: true,
-          deleted_reason: reason,
-          previous_status: (currentTransaction as any).status,
-        } as any)
-        .eq('id', transactionId);
-
+        .from('reconciliation_links')
+        .update({ is_confirmed: true })
+        .eq('id', linkId);
       if (error) throw error;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['kingdom-transactions'] });
-      queryClient.invalidateQueries({ queryKey: ['kingdom-transaction-counts'] });
-      showToast('Transaction deleted successfully!', 'success');
-    },
-    onError: (error) => {
-      showToast(`Failed to delete transaction\n\n${error.message}`, 'error');
-      console.error('Delete transaction error:', error);
+      queryClient.invalidateQueries({ queryKey: ['system-audit'] });
+      toast({ title: 'Match confirmed' });
     },
   });
 
-  const restoreTransactionMutation = useMutation({
-    mutationFn: async (transactionId: string) => {
-      // Get the previous status
-      const { data: transaction, error: fetchError } = await supabase
-        .from('transactions')
-        .select('previous_status')
-        .eq('id', transactionId)
-        .single();
-
-      if (fetchError) throw fetchError;
-
-      const { error } = await supabase
-        .from('transactions')
-        .update({
-          is_deleted: false,
-          deleted_reason: null,
-          status: (transaction as any).previous_status || 'pending-ledger',
-          previous_status: null,
-        } as any)
-        .eq('id', transactionId);
-
-      if (error) throw error;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['kingdom-transactions'] });
-      queryClient.invalidateQueries({ queryKey: ['kingdom-transaction-counts'] });
-      showToast('Transaction restored successfully!', 'success');
-    },
-    onError: (error) => {
-      showToast(`Failed to restore transaction\n\n${error.message}`, 'error');
-      console.error('Restore transaction error:', error);
-    },
-  });
-
-  const editTransactionMutation = useMutation({
-    mutationFn: async ({ transactionId, updates }: { transactionId: string; updates: Partial<Transaction> }) => {
-      const { error } = await supabase
-        .from('transactions')
-        .update(updates as any)
-        .eq('id', transactionId);
-
-      if (error) throw error;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['kingdom-transactions'] });
-      queryClient.invalidateQueries({ queryKey: ['kingdom-transaction-counts'] });
-      showToast('Transaction updated successfully!', 'success');
-    },
-    onError: (error) => {
-      showToast(`Failed to update transaction\n\n${error.message}`, 'error');
-      console.error('Edit transaction error:', error);
-    },
-  });
-
-  const autoReconcileMutation = useMutation({
-    mutationFn: () => autoReconcileAll('transactions'),
-    onSuccess: (result) => {
-      queryClient.invalidateQueries({ queryKey: ['kingdom-transactions'] });
-      queryClient.invalidateQueries({ queryKey: ['kingdom-transaction-counts'] });
-
-      const summary = [
-        'RECONCILIATION COMPLETE',
-        '',
-        `Total Processed: ${result.totalProcessed}`,
-        `Reconciliation CORRECT: ${result.matched}`,
-        `Reconciliation INCORRECT: ${result.totalProcessed - result.matched}`,
-        '',
-        'Criteria:',
-        '  • Date: ±2 days tolerance',
-        '  • Value: 100% exact match',
-        '  • Payment Method: 100% exact match',
-        '  • Name: ≥50% similarity (skipped for Credit Card)'
-      ].join('\n');
-
-      showToast(summary, 'success');
-    },
-    onError: (error) => {
-      showToast(`Auto Reconcile Failed\n\n${error.message}`, 'error');
-      console.error('Auto reconcile error:', error);
-    },
-  });
+  const auditRows = useMemo(() => data?.pages.flat() || [], [data]);
 
   useEffect(() => {
     const observer = new IntersectionObserver(
@@ -476,609 +112,193 @@ export default function KingdomTransactions() {
     );
 
     const target = observerTarget.current;
-    if (target) {
-      observer.observe(target);
-    }
-
+    if (target) observer.observe(target);
     return () => {
-      if (target) {
-        observer.unobserve(target);
-      }
+      if (target) observer.unobserve(target);
     };
   }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
-  if (isLoadingPreferredMinDate) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-muted-foreground">Loading transactions...</div>
-      </div>
-    );
-  }
+  const getGapColor = (gap: string | null) => {
+    if (gap === null) return 'text-muted-foreground';
+    const gapVal = Math.abs(parseFloat(gap));
+    if (gapVal === 0) return 'text-green-600 dark:text-green-400';
+    if (gapVal < threshold) return 'text-amber-500';
+    return 'text-red-500';
+  };
 
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-muted-foreground">Loading transactions...</div>
-      </div>
-    );
-  }
+  const getConfidenceColor = (score: number | null) => {
+    if (score === null) return 'bg-gray-100 text-gray-800';
+    if (score >= 95) return 'bg-green-100 text-green-800';
+    if (score >= 80) return 'bg-yellow-100 text-yellow-800';
+    return 'bg-red-100 text-red-800';
+  };
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Bank and Credit Card Reconciliation</h1>
+          <h1 className="text-3xl font-bold tracking-tight">System Audit</h1>
           <p className="text-muted-foreground">
-            View and confirm all the payments included have been received.
+            Compare Google Sheets Ledger against Kingdom CRM System data.
           </p>
         </div>
-        <Button
-          onClick={() => autoReconcileMutation.mutate()}
-          disabled={autoReconcileMutation.isPending}
-          className="min-w-[160px]"
-          aria-busy={autoReconcileMutation.isPending}
-          aria-live="polite"
-        >
-          {autoReconcileMutation.isPending ? (
-            <>
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Reconciling...
-            </>
-          ) : (
-            <>
-              <CheckCircle2 className="h-4 w-4" />
-              Auto Reconcile
-            </>
-          )}
-        </Button>
       </div>
 
-      <div className="flex flex-wrap gap-4">
-        <div className="relative flex-1">
+      <div className="flex flex-wrap gap-4 items-end">
+        <div className="relative flex-1 min-w-[300px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
-            placeholder="Search by name, depositor, car, or amount..."
+            placeholder="Search ledger entries..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                handleApplyFilters();
-              }
-            }}
             className="pl-9"
           />
         </div>
-
         <div className="flex gap-2">
-          <div className="relative">
-            <Calendar className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              type="text"
-              placeholder="MM/DD/YYYY"
-              value={dateFrom}
-              onChange={(e) => {
-                const formatted = formatUSDateInput(e.target.value);
-                setDateFrom(formatted);
-              }}
-              onClick={() => openDatePicker(dateFromPickerRef)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  handleApplyFilters();
-                }
-              }}
-              className="pl-9 w-40 cursor-pointer"
-              maxLength={10}
-            />
-            <input
-              ref={dateFromPickerRef}
-              type="date"
-              lang="en-US"
-              tabIndex={-1}
-              aria-hidden="true"
-              value={parseUSDateToISO(dateFrom) ?? ''}
-              onChange={(e) => setDateFrom(e.target.value ? formatISODateToUS(e.target.value) : '')}
-              className="absolute inset-0 h-0 w-0 opacity-0 pointer-events-none"
-            />
-          </div>
-          <div className="relative">
-            <Calendar className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              type="text"
-              placeholder="MM/DD/YYYY"
-              value={dateTo}
-              onChange={(e) => {
-                const formatted = formatUSDateInput(e.target.value);
-                setDateTo(formatted);
-              }}
-              onClick={() => openDatePicker(dateToPickerRef)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  handleApplyFilters();
-                }
-              }}
-              className="pl-9 w-40 cursor-pointer"
-              maxLength={10}
-            />
-            <input
-              ref={dateToPickerRef}
-              type="date"
-              lang="en-US"
-              tabIndex={-1}
-              aria-hidden="true"
-              value={parseUSDateToISO(dateTo) ?? ''}
-              onChange={(e) => setDateTo(e.target.value ? formatISODateToUS(e.target.value) : '')}
-              className="absolute inset-0 h-0 w-0 opacity-0 pointer-events-none"
-            />
-          </div>
-        </div>
-
-        <div className="flex gap-2 items-end">
-          <Button onClick={handleApplyFilters} disabled={!filtersChanged} size="sm">
-            Apply Filters
-          </Button>
           <Button
-            variant="outline"
-            onClick={handleClearFilters}
-            disabled={!hasActiveFilters && searchTerm === '' && dateFrom === '' && dateTo === ''}
+            variant={statusFilter === 'all' ? 'default' : 'outline'}
+            onClick={() => setStatusFilter('all')}
             size="sm"
           >
-            Clear
+            All
+          </Button>
+          <Button
+            variant={statusFilter === 'mismatch' ? 'default' : 'outline'}
+            onClick={() => setStatusFilter('mismatch')}
+            size="sm"
+          >
+            Mismatches
+          </Button>
+          <Button
+            variant={statusFilter === 'perfect' ? 'default' : 'outline'}
+            onClick={() => setStatusFilter('perfect')}
+            size="sm"
+          >
+            Perfect Match
+          </Button>
+          <Button
+            variant={statusFilter === 'unmatched' ? 'default' : 'outline'}
+            onClick={() => setStatusFilter('unmatched')}
+            size="sm"
+          >
+            Unmatched
           </Button>
         </div>
       </div>
 
-      <div className="flex gap-2">
-        <Button
-          variant={statusFilter === 'all' ? 'default' : 'outline'}
-          onClick={() => handleStatusFilterChange('all')}
-          size="sm"
-        >
-          All {counts && <span className="ml-1.5 text-xs opacity-70">({counts.all})</span>}
-        </Button>
-        <Button
-          variant={statusFilter === 'kingdom' ? 'default' : 'outline'}
-          onClick={() => handleStatusFilterChange('kingdom')}
-          size="sm"
-        >
-          Kingdom {counts && <span className="ml-1.5 text-xs opacity-70">({counts.kingdom})</span>}
-        </Button>
-        <Button
-          variant={statusFilter === 'reconciled' ? 'default' : 'outline'}
-          onClick={() => handleStatusFilterChange('reconciled')}
-          size="sm"
-        >
-          Reconciled {counts && <span className="ml-1.5 text-xs opacity-70">({counts.reconciled})</span>}
-        </Button>
-        <Button
-          variant={statusFilter === 'pending-statement' ? 'default' : 'outline'}
-          onClick={() => handleStatusFilterChange('pending-statement')}
-          size="sm"
-        >
-          Pending Statement {counts && <span className="ml-1.5 text-xs opacity-70">({counts['pending-statement']})</span>}
-        </Button>
-        <Button
-          variant={statusFilter === 'deleted' ? 'default' : 'outline'}
-          onClick={() => handleStatusFilterChange('deleted')}
-          size="sm"
-        >
-          Deleted {counts && <span className="ml-1.5 text-xs opacity-70">({counts.deleted})</span>}
-        </Button>
-      </div>
-
-      {selectedForMatch && (
-        <Card className="p-3 bg-blue-50 dark:bg-blue-950 border-blue-200 dark:border-blue-800 sticky top-0 z-10">
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <div className="text-xs font-semibold text-blue-900 dark:text-blue-100">
-                Selected for Match:
-              </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setSelectedForMatch(null)}
-                className="h-7 px-2 text-xs"
-              >
-                Cancel
-              </Button>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-3 text-sm text-blue-800 dark:text-blue-200">
-              <div>
-                <div className="font-medium text-blue-700 dark:text-blue-300 text-xs mb-0.5">Date</div>
-                <div>{formatDate(selectedForMatch.date)}</div>
-              </div>
-              <div>
-                <div className="font-medium text-blue-700 dark:text-blue-300 text-xs mb-0.5">Client / Depositor</div>
-                {selectedForMatch.name && <div className="truncate" title={selectedForMatch.name}>{selectedForMatch.name}</div>}
-                {selectedForMatch.depositor && (
-                  <div className={selectedForMatch.name ? 'text-xs truncate' : 'truncate'} title={selectedForMatch.depositor}>
-                    {selectedForMatch.depositor}
-                  </div>
-                )}
-                {!selectedForMatch.name && !selectedForMatch.depositor && <div>-</div>}
-              </div>
-              <div>
-                <div className="font-medium text-blue-700 dark:text-blue-300 text-xs mb-0.5">Car</div>
-                <div className="truncate">{selectedForMatch.car || '-'}</div>
-              </div>
-              <div>
-                <div className="font-medium text-blue-700 dark:text-blue-300 text-xs mb-0.5">Method</div>
-                <div className="truncate">{selectedForMatch.payment_method || '-'}</div>
-              </div>
-              <div>
-                <div className="font-medium text-blue-700 dark:text-blue-300 text-xs mb-0.5">Amount</div>
-                <div className="font-semibold">{formatCurrency(selectedForMatch.value)}</div>
-              </div>
-              <div>
-                <div className="font-medium text-blue-700 dark:text-blue-300 text-xs mb-0.5">Status</div>
-                <div className="truncate">{selectedForMatch.status}</div>
-              </div>
-              <div>
-                <div className="font-medium text-blue-700 dark:text-blue-300 text-xs mb-0.5">Source</div>
-                <div className="truncate text-xs" title={selectedForMatch.source}>{selectedForMatch.source}</div>
-              </div>
-            </div>
-          </div>
-        </Card>
-      )}
-
-      <EditTransactionModal
-        isOpen={editModalOpen}
-        onClose={() => {
-          setEditModalOpen(false);
-          setTransactionToEdit(null);
-        }}
-        onConfirm={(updates) => {
-          if (transactionToEdit) {
-            editTransactionMutation.mutate({ transactionId: transactionToEdit.id, updates });
-          }
-        }}
-        transaction={transactionToEdit}
-      />
-
-      <DeleteTransactionModal
-        isOpen={deleteModalOpen}
-        onClose={() => {
-          setDeleteModalOpen(false);
-          setSelectedTransaction(null);
-        }}
-        onConfirm={(reason) => {
-          if (selectedTransaction) {
-            deleteTransactionMutation.mutate({ transactionId: selectedTransaction.id, reason });
-          }
-        }}
-        mode={deleteModalMode}
-        existingReason={selectedTransaction?.deleted_reason || undefined}
-        onRestore={
-          deleteModalMode === 'view' && selectedTransaction
-            ? () => restoreTransactionMutation.mutate(selectedTransaction.id)
-            : undefined
-        }
-      />
-
       <Card>
-        <div 
-          className="grid gap-3 border-b px-4 py-3 text-xs font-semibold items-center bg-muted/50 sticky top-0 z-10"
-          style={{ gridTemplateColumns }}
-        >
-          <div className="relative flex items-center h-full">
-            <SortableHeader label="Date" column="date" currentSort={sortConfig} onSort={handleSort} />
-            <ResizeHandle width={widths[0]} onResize={(w) => updateWidth(0, w)} />
-          </div>
-          <div className="relative flex items-center h-full">
-            <SortableHeader label="Client / Depositor" column="name" currentSort={sortConfig} onSort={handleSort} />
-            <ResizeHandle width={widths[1]} onResize={(w) => updateWidth(1, w)} />
-          </div>
-          <div className="relative flex items-center h-full">
-            <SortableHeader label="Car" column="car" currentSort={sortConfig} onSort={handleSort} />
-            <ResizeHandle width={widths[2]} onResize={(w) => updateWidth(2, w)} />
-          </div>
-          <div className="relative flex items-center h-full">
-            <SortableHeader label="Method" column="payment_method" currentSort={sortConfig} onSort={handleSort} />
-            <ResizeHandle width={widths[3]} onResize={(w) => updateWidth(3, w)} />
-          </div>
-          <div className="relative flex items-center h-full">
-            <SortableHeader label="Amount" column="value" currentSort={sortConfig} onSort={handleSort} />
-            <ResizeHandle width={widths[4]} onResize={(w) => updateWidth(4, w)} />
-          </div>
-          <div className="relative flex items-center h-full">
-            <SortableHeader label="Status" column="status" currentSort={sortConfig} onSort={handleSort} />
-            <ResizeHandle width={widths[5]} onResize={(w) => updateWidth(5, w)} />
-          </div>
-          <div className="relative flex items-center h-full">
-            <SortableHeader label="Confidence" column="confidence" currentSort={sortConfig} onSort={handleSort} />
-            <ResizeHandle width={widths[6]} onResize={(w) => updateWidth(6, w)} />
-          </div>
-          <div className="text-right px-2">Actions</div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm text-left">
+            <thead className="bg-muted/50 text-xs uppercase font-semibold">
+              <tr>
+                <th className="px-4 py-3">Date</th>
+                <th className="px-4 py-3">Ledger Entry</th>
+                <th className="px-4 py-3">System Entry</th>
+                <th className="px-4 py-3 text-right">Ledger Val</th>
+                <th className="px-4 py-3 text-right">System Val</th>
+                <th className="px-4 py-3 text-right">Gap</th>
+                <th className="px-4 py-3 text-center">Score</th>
+                <th className="px-4 py-3 text-center">Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {isLoading ? (
+                <tr>
+                  <td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">
+                    <Loader2 className="h-6 w-6 animate-spin mx-auto mb-2" />
+                    Loading audit data...
+                  </td>
+                </tr>
+              ) : auditRows.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">
+                    No records found matching filters.
+                  </td>
+                </tr>
+              ) : (
+                auditRows.map((row) => (
+                  <tr 
+                    key={row.ledger_id} 
+                    className="hover:bg-muted/30 transition-colors cursor-default"
+                    onDoubleClick={() => {
+                      if (row.link_id && !row.is_confirmed && row.confidence_score && row.confidence_score < 100) {
+                        confirmMatchMutation.mutate(row.link_id);
+                      }
+                    }}
+                  >
+                    <td className="px-4 py-3 align-top whitespace-nowrap">
+                      {formatDate(row.ledger_date)}
+                    </td>
+                    <td className="px-4 py-3 align-top">
+                      <div className="font-medium truncate max-w-[200px]" title={row.ledger_name}>
+                        {row.ledger_name || 'N/A'}
+                      </div>
+                      <div className="text-xs text-muted-foreground truncate max-w-[200px]" title={row.ledger_source}>
+                        {row.ledger_source}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 align-top">
+                      {row.system_id ? (
+                        <>
+                          <div className="font-medium text-xs">Matched in System</div>
+                          <div className="text-xs text-muted-foreground">{formatDate(row.system_date!)}</div>
+                        </>
+                      ) : (
+                        <div className="text-red-500 flex items-center gap-1 text-xs">
+                          <AlertCircle className="h-3 w-3" />
+                          Not in Kingdom CRM
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 align-top text-right font-mono">
+                      {formatCurrency(row.ledger_value)}
+                    </td>
+                    <td className="px-4 py-3 align-top text-right font-mono text-muted-foreground">
+                      {row.system_value ? formatCurrency(row.system_value) : '-'}
+                    </td>
+                    <td className={`px-4 py-3 align-top text-right font-bold font-mono ${getGapColor(row.gap_amount)}`}>
+                      {row.gap_amount ? formatCurrency(row.gap_amount) : '-'}
+                    </td>
+                    <td className="px-4 py-3 align-top text-center">
+                      {row.confidence_score !== null && (
+                        <Badge className={`${getConfidenceColor(row.confidence_score)} border-0`}>
+                          {row.confidence_score}%
+                        </Badge>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 align-top text-center">
+                      {row.is_confirmed ? (
+                        <Badge variant="outline" className="text-green-600 border-green-200 bg-green-50">
+                          <CheckCircle2 className="h-3 w-3 mr-1" />
+                          Confirmed
+                        </Badge>
+                      ) : row.link_id && row.confidence_score && row.confidence_score < 100 ? (
+                        <div className="flex flex-col items-center gap-1">
+                           <Badge variant="outline" className="text-amber-600 border-amber-200 bg-amber-50">
+                            Low Confidence
+                          </Badge>
+                          <span className="text-[10px] text-muted-foreground">Double-click to confirm</span>
+                        </div>
+                      ) : row.link_id ? (
+                        <Badge variant="outline" className="text-blue-600 border-blue-200 bg-blue-50">
+                          Auto-Matched
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline" className="text-muted-foreground">
+                          Pending
+                        </Badge>
+                      )}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
         </div>
-
-        <div className="divide-y">
-          {filteredTransactions.map((transaction) => (
-            <TransactionRow
-              key={transaction.id}
-              gridTemplateColumns={gridTemplateColumns}
-              transaction={transaction}
-              selectedForMatch={selectedForMatch}
-              onSelectForMatch={setSelectedForMatch}
-              onManualMatch={(t2) => manualReconcileMutation.mutate({ transaction1: selectedForMatch!, transaction2: t2 })}
-              isMatchInProgress={manualReconcileMutation.isPending}
-              allTransactions={filteredTransactions}
-              onDelete={(t) => {
-                setSelectedTransaction(t);
-                setDeleteModalMode('delete');
-                setDeleteModalOpen(true);
-              }}
-              onViewDeleteReason={(t) => {
-                setSelectedTransaction(t);
-                setDeleteModalMode('view');
-                setDeleteModalOpen(true);
-              }}
-              onEdit={(t) => {
-                setTransactionToEdit(t);
-                setEditModalOpen(true);
-              }}
-              statusFilter={statusFilter}
-            />
-          ))}
+        <div ref={observerTarget} className="p-4 border-t text-center text-xs text-muted-foreground">
+          {isFetchingNextPage ? 'Loading more records...' : hasNextPage ? 'Scroll for more' : `Showing all ${auditRows.length} records`}
         </div>
       </Card>
-
-      <div ref={observerTarget} className="py-4 text-center space-y-1">
-        {isFetchingNextPage && (
-          <div className="text-muted-foreground">Loading more...</div>
-        )}
-        <div className="text-muted-foreground">
-          Showing {filteredTransactions.length} transactions
-        </div>
-        <div className="text-muted-foreground">
-          Total of transactions: {formatCurrency(filteredTotal)}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function TransactionRow({
-  transaction,
-  selectedForMatch,
-  onSelectForMatch,
-  onManualMatch,
-  isMatchInProgress,
-  allTransactions,
-  onDelete,
-  onViewDeleteReason,
-  onEdit,
-  statusFilter,
-  gridTemplateColumns,
-}: {
-  transaction: Transaction;
-  selectedForMatch: Transaction | null;
-  onSelectForMatch: (transaction: Transaction | null) => void;
-  onManualMatch: (transaction: Transaction) => void;
-  isMatchInProgress: boolean;
-  allTransactions: Transaction[];
-  onDelete: (transaction: Transaction) => void;
-  onViewDeleteReason: (transaction: Transaction) => void;
-  onEdit: (transaction: Transaction) => void;
-  statusFilter: ReconciliationStatus | 'all' | 'kingdom' | 'deleted';
-  gridTemplateColumns: string;
-}) {
-  const [showMatch, setShowMatch] = useState(false);
-
-  const { data: matchedTransaction } = useQuery<Transaction | null>({
-    queryKey: ['kingdom-transaction', 'match', transaction.matched_transaction_id],
-    queryFn: async () => {
-      if (!transaction.matched_transaction_id) return null;
-
-      const { data, error } = await supabase
-        .from('transactions')
-        .select('*')
-        .eq('id', transaction.matched_transaction_id)
-        .single();
-
-      if (error) throw error;
-      return data;
-    },
-    enabled: showMatch && !!transaction.matched_transaction_id,
-  });
-
-  const statusColors = {
-    reconciled: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200',
-    'pending-ledger': 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',
-    'pending-statement': 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200',
-  };
-
-  const getConfidenceColor = (confidence: number | null) => {
-    if (!confidence) return 'bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200';
-    if (confidence === 100) return 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200';
-    if (confidence >= 80) return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200';
-    return 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200';
-  };
-
-  // Apply 50% opacity to deleted transactions when viewing "All"
-  const deletedTextStyle = transaction.is_deleted && statusFilter === 'all' ? 'opacity-50' : '';
-
-  return (
-    <div className={`group hover:bg-muted/50 transition-colors ${deletedTextStyle}`}>
-      <div 
-        className="grid gap-3 px-4 py-3 items-center text-sm"
-        style={{ gridTemplateColumns }}
-      >
-        {/* Date */}
-        <div>
-          <div className="font-medium text-xs">{formatDate(transaction.date)}</div>
-        </div>
-
-        {/* Client / Depositor */}
-        <div className="min-w-0">
-          {transaction.name && (
-            <div className="font-medium text-xs truncate" title={`Client: ${transaction.name}`}>
-              {transaction.name}
-            </div>
-          )}
-          {transaction.depositor && (
-            <div
-              className={`${transaction.name ? 'text-xs text-muted-foreground' : 'font-medium text-xs'} truncate`}
-              title={`Depositor: ${transaction.depositor}`}
-            >
-              {transaction.depositor}
-            </div>
-          )}
-          {!transaction.name && !transaction.depositor && (
-            <div className="font-medium text-xs">-</div>
-          )}
-        </div>
-
-        {/* Car */}
-        <div>
-          <div className="font-medium text-xs truncate">{transaction.car || '-'}</div>
-        </div>
-
-        {/* Method */}
-        <div>
-          <div className="font-medium text-xs truncate">{transaction.payment_method || '-'}</div>
-        </div>
-
-        {/* Amount */}
-        <div>
-          <div className="font-medium text-xs">{formatCurrency(transaction.value)}</div>
-        </div>
-
-        {/* Status */}
-        <div>
-          <Badge className={statusColors[transaction.status as keyof typeof statusColors]}>
-            {transaction.status}
-          </Badge>
-        </div>
-
-        {/* Confidence */}
-        <div>
-          {transaction.status === 'reconciled' && transaction.confidence !== null ? (
-            <Badge className={getConfidenceColor(transaction.confidence)}>
-              {transaction.confidence}%
-            </Badge>
-          ) : (
-            <div className="font-medium text-xs text-muted-foreground">-</div>
-          )}
-        </div>
-
-        {/* Actions */}
-        <div className="flex items-center justify-end gap-1">
-          {!transaction.is_deleted && transaction.status !== 'reconciled' && (
-            <Button
-              size="icon"
-              variant={selectedForMatch?.id === transaction.id ? 'default' : 'ghost'}
-              className="h-8 w-8"
-              onClick={() => {
-                if (selectedForMatch?.id === transaction.id) {
-                  onSelectForMatch(null);
-                } else if (selectedForMatch) {
-                  onManualMatch(transaction);
-                } else {
-                  onSelectForMatch(transaction);
-                }
-              }}
-              disabled={isMatchInProgress || (selectedForMatch !== null && selectedForMatch.id !== transaction.id && (selectedForMatch.source === transaction.source))}
-              title={selectedForMatch?.id === transaction.id ? 'Cancel selection' : selectedForMatch ? 'Match with selected' : 'Select for matching'}
-            >
-              {isMatchInProgress && selectedForMatch?.id === transaction.id ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Link2 className="h-4 w-4" />
-              )}
-            </Button>
-          )}
-          {!transaction.is_deleted && transaction.status === 'reconciled' && (
-            <Button
-              size="icon"
-              variant="ghost"
-              className="h-8 w-8"
-              onClick={() => setShowMatch(!showMatch)}
-              title="View matched transaction"
-            >
-              <Eye className="h-4 w-4" />
-            </Button>
-          )}
-          {transaction.is_deleted && (
-            <Button
-              size="icon"
-              variant="ghost"
-              className="h-8 w-8"
-              onClick={() => onViewDeleteReason(transaction)}
-              title="View deletion reason and restore"
-            >
-              <Eye className="h-4 w-4" />
-            </Button>
-          )}
-          {!transaction.is_deleted && transaction.status !== 'reconciled' && (
-            <>
-              <Button
-                size="icon"
-                variant="ghost"
-                className="h-8 w-8"
-                onClick={() => onEdit(transaction)}
-                title="Edit transaction"
-              >
-                <Pencil className="h-4 w-4" />
-              </Button>
-              <Button
-                size="icon"
-                variant="ghost"
-                className="h-8 w-8"
-                onClick={() => onDelete(transaction)}
-                title="Delete transaction"
-              >
-                <Trash2 className="h-4 w-4" />
-              </Button>
-            </>
-          )}
-        </div>
-      </div>
-
-      {showMatch && matchedTransaction && (
-        <div className="px-4 pb-4 bg-muted/30 border-t">
-          <div className="py-3 px-4 mt-2 bg-background rounded-md border">
-            <div className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">
-              Matched Transaction ({transaction.confidence}% confidence)
-            </div>
-            <div 
-              className="grid gap-3 text-sm"
-              style={{ gridTemplateColumns }}
-            >
-              <div className="text-xs">{formatDate(matchedTransaction.date)}</div>
-              
-              <div className="min-w-0">
-                {matchedTransaction.name && (
-                  <div className="truncate text-xs" title={`Client: ${matchedTransaction.name}`}>
-                    {matchedTransaction.name}
-                  </div>
-                )}
-                {matchedTransaction.depositor && (
-                  <div
-                    className={`${matchedTransaction.name ? 'text-xs text-muted-foreground' : 'text-xs'} truncate`}
-                    title={`Depositor: ${matchedTransaction.depositor}`}
-                  >
-                    {matchedTransaction.depositor}
-                  </div>
-                )}
-                {!matchedTransaction.name && !matchedTransaction.depositor && (
-                  <div className="text-xs">-</div>
-                )}
-              </div>
-
-              <div className="truncate text-xs">{matchedTransaction.car || '-'}</div>
-              <div className="truncate text-xs">{matchedTransaction.payment_method || '-'}</div>
-              <div className="text-xs">{formatCurrency(matchedTransaction.value)}</div>
-              
-              <div className="col-span-3 text-xs text-muted-foreground truncate flex items-center">
-                Source: {matchedTransaction.source}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

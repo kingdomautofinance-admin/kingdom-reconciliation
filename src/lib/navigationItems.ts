@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react';
-import { LayoutDashboard, List, Crown, BarChart3, Landmark, Settings } from 'lucide-react';
+import { LayoutDashboard, List, Crown, BarChart3, Landmark, Settings, CreditCard } from 'lucide-react';
 
 export type NavItem = {
   label: string;
@@ -25,6 +25,12 @@ export const primaryNavItems: NavItem[] = [
     label: 'Accounts Receivables',
     path: '/accounts-receivable',
     icon: Landmark,
+    group: 'primary'
+  },
+  {
+    label: 'Stripe Payouts',
+    path: '/stripe-reconciliation',
+    icon: CreditCard,
     group: 'primary'
   },
   {

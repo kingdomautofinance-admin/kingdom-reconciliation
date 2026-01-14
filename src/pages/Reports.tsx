@@ -5,7 +5,7 @@ import { supabase } from '@/lib/supabase';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Calendar, TrendingUp, CheckCircle2, Clock } from 'lucide-react';
+import { Calendar, TrendingUp, CheckCircle2, Clock, AlertTriangle } from 'lucide-react';
 import { SortableHeader } from '@/components/ui/SortableHeader';
 import { type SortConfig, getNextSortState } from '@/lib/sorting';
 import { parseUSDateToISO, formatUSDateInput, formatISODateToUS, formatCurrency, formatDate } from '@/lib/utils';
@@ -14,6 +14,7 @@ import { DateSummaryCard, type DateSummary } from '@/components/reports/DateSumm
 import { ReportViewToggle, type ViewType } from '@/components/reports/ReportViewToggle';
 import { MonthlyCalendarView } from '@/components/reports/MonthlyCalendarView';
 import { YearlyCalendarView } from '@/components/reports/YearlyCalendarView';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 type ReportSortColumn = 'date' | 'reconciled_count' | 'pending_count' | 'total_count' | 'reconciliation_percentage';
 
@@ -28,6 +29,7 @@ export default function Reports() {
 
   // View state management
   const [view, setView] = useState<ViewType>('list');
+  const [showDiscrepancies, setShowDiscrepancies] = useState(false);
   const [calendarMonth, setCalendarMonth] = useState<number>(() => new Date().getMonth() + 1);
   const [calendarYear, setCalendarYear] = useState<number>(() => new Date().getFullYear());
   const [sortConfig, setSortConfig] = useState<SortConfig<ReportSortColumn>>({ column: 'date', direction: 'desc' });
@@ -188,6 +190,37 @@ export default function Reports() {
     staleTime: 30000,
   });
 
+  const discrepancyData = useQuery({
+    queryKey: ['daily-discrepancy', normalizedDateFrom, normalizedDateTo],
+    enabled: showDiscrepancies,
+    queryFn: async () => {
+      const { data: ledgerData } = await supabase.rpc('get_daily_summary', { 
+        start_date: normalizedDateFrom || '2024-01-01',
+        end_date: normalizedDateTo || '2026-12-31'
+      });
+      return ledgerData;
+    }
+  });
+
+  const { data: discrepancies, isLoading: loadingDiscrepancies } = useQuery({
+    queryKey: ['discrepancy-report', effectiveStartDate, effectiveEndDate],
+    queryFn: async () => {
+      // Aggregate data from Kingdom, Ledger, and Bank
+      const { data, error } = await supabase.rpc('get_daily_discrepancies', {
+        start_date: effectiveStartDate,
+        end_date: effectiveEndDate
+      });
+      if (error) throw error;
+      return data as Array<{
+        date: string;
+        kingdom_sum: number;
+        ledger_sum: number;
+        bank_sum: number;
+      }>;
+    },
+    enabled: showDiscrepancies
+  });
+
   const summaryStats = useMemo(() => {
     if (!dateSummaries) return null;
 
@@ -265,220 +298,250 @@ export default function Reports() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Reports</h1>
-        <p className="text-muted-foreground">
-          Reconciliation status by transaction date
-        </p>
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Reports</h1>
+          <p className="text-muted-foreground">
+            Financial reconciliation and discrepancy analysis.
+          </p>
+        </div>
+        
+        <div className="flex items-center gap-2">
+          <Button
+            variant={showDiscrepancies ? 'default' : 'outline'}
+            onClick={() => setShowDiscrepancies(!showDiscrepancies)}
+            className="gap-2"
+          >
+            <AlertTriangle className="h-4 w-4" />
+            {showDiscrepancies ? 'Hide Discrepancies' : 'Show Discrepancies'}
+          </Button>
+          <ReportViewToggle view={view} onViewChange={setView} />
+        </div>
       </div>
 
-      {/* Summary Cards */}
-      {summaryStats && (
-        <div className="grid gap-4 md:grid-cols-3">
-          <Card className="p-4">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-blue-100 dark:bg-blue-900 rounded-lg">
-                <Calendar className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Transaction Dates</p>
-                <p className="text-2xl font-bold">{summaryStats.totalDates}</p>
-              </div>
-            </div>
-          </Card>
-
-          <Card className="p-4">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-green-100 dark:bg-green-900 rounded-lg">
-                <CheckCircle2 className="h-5 w-5 text-green-600 dark:text-green-400" />
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Overall Reconciliation</p>
-                <p className="text-2xl font-bold text-green-600 dark:text-green-400">
-                  {summaryStats.overallPercentage}%
-                </p>
-              </div>
-            </div>
-          </Card>
-
-          <Card className="p-4">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-purple-100 dark:bg-purple-900 rounded-lg">
-                <TrendingUp className="h-5 w-5 text-purple-600 dark:text-purple-400" />
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Fully Reconciled Dates</p>
-                <p className="text-2xl font-bold text-purple-600 dark:text-purple-400">
-                  {summaryStats.fullyReconciledDates}
-                </p>
-              </div>
-            </div>
-          </Card>
-        </div>
-      )}
-
-      {/* Date Range Filters and View Toggle */}
-      <Card className="p-4">
-        <div className="flex flex-col lg:flex-row gap-4 lg:items-end lg:justify-between">
-          {/* Date Range Section */}
-          <div className="flex flex-wrap gap-4 items-end flex-1">
-            <div className="flex-1 min-w-[200px]">
-              <label className="text-sm font-medium mb-2 block">Date Range</label>
-              <div className="flex gap-2">
-                <div className="relative flex-1">
-                  <Calendar className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    type="text"
-                    placeholder="MM/DD/YYYY"
-                    value={dateFrom}
-                    onChange={(e) => {
-                      const formatted = formatUSDateInput(e.target.value);
-                      setDateFrom(formatted);
-                    }}
-                    onClick={() => openDatePicker(dateFromPickerRef)}
-                    className="pl-9 cursor-pointer"
-                    maxLength={10}
-                  />
-                  <input
-                    ref={dateFromPickerRef}
-                    type="date"
-                    lang="en-US"
-                    tabIndex={-1}
-                    aria-hidden="true"
-                    value={parseUSDateToISO(dateFrom) ?? ''}
-                    onChange={(e) => setDateFrom(e.target.value ? formatISODateToUS(e.target.value) : '')}
-                    className="absolute inset-0 h-0 w-0 opacity-0 pointer-events-none"
-                  />
-                </div>
-                <div className="relative flex-1">
-                  <Calendar className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    type="text"
-                    placeholder="MM/DD/YYYY"
-                    value={dateTo}
-                    onChange={(e) => {
-                      const formatted = formatUSDateInput(e.target.value);
-                      setDateTo(formatted);
-                    }}
-                    onClick={() => openDatePicker(dateToPickerRef)}
-                    className="pl-9 cursor-pointer"
-                    maxLength={10}
-                  />
-                  <input
-                    ref={dateToPickerRef}
-                    type="date"
-                    lang="en-US"
-                    tabIndex={-1}
-                    aria-hidden="true"
-                    value={parseUSDateToISO(dateTo) ?? ''}
-                    onChange={(e) => setDateTo(e.target.value ? formatISODateToUS(e.target.value) : '')}
-                    className="absolute inset-0 h-0 w-0 opacity-0 pointer-events-none"
-                  />
-                </div>
-              </div>
-            </div>
-            <div className="flex gap-2">
-              <Button onClick={handleApplyFilters} disabled={!filtersChanged} size="sm">
-                Apply
-              </Button>
-              <Button
-                variant="outline"
-                onClick={handleClearFilters}
-                disabled={!hasActiveFilters && dateFrom === '' && dateTo === ''}
-                size="sm"
-              >
-                Clear
-              </Button>
-            </div>
-          </div>
-
-          {/* View Toggle */}
-          <div className="flex">
-            <ReportViewToggle view={view} onViewChange={setView} />
-          </div>
-        </div>
-
-        <p className="text-xs text-muted-foreground mt-2">
-          {view === 'list' && !hasActiveFilters && 'Default: Last 30 days'}
-          {view === 'monthly' && !hasActiveFilters && `Showing: ${formatMonthYear(calendarYear, calendarMonth)}`}
-          {view === 'yearly' && !hasActiveFilters && `Showing: ${calendarYear}`}
-          {hasActiveFilters && `Filtered: ${formatISODateToUS(effectiveStartDate)} - ${formatISODateToUS(effectiveEndDate)}`}
-        </p>
-      </Card>
-
-      {/* List View */}
-      {view === 'list' && (
+      {showDiscrepancies ? (
         <Card>
-          <div className={`grid ${GRID_COLS} gap-4 p-4 text-xs font-semibold border-b bg-muted/50 items-center sticky top-0 z-10`}>
-            <SortableHeader label="Date" column="date" currentSort={sortConfig} onSort={handleSort} />
-            <SortableHeader label="Reconciled" column="reconciled_count" currentSort={sortConfig} onSort={handleSort} />
-            <SortableHeader label="Pending" column="pending_count" currentSort={sortConfig} onSort={handleSort} />
-            <SortableHeader label="Total" column="total_count" currentSort={sortConfig} onSort={handleSort} />
-            <SortableHeader label="%" column="reconciliation_percentage" currentSort={sortConfig} onSort={handleSort} />
-          </div>
-
-          <div className="divide-y">
-            {sortedSummaries.length === 0 ? (
-              <div className="p-8 text-center text-muted-foreground">
-                <Clock className="h-12 w-12 mx-auto mb-2 opacity-50" />
-                <p>No transactions found in the selected date range</p>
-              </div>
-            ) : (
-              sortedSummaries.map((summary) => (
-                <div
-                  key={summary.date}
-                  className={`grid ${GRID_COLS} gap-4 p-4 items-center text-sm hover:bg-muted/50 transition-colors cursor-pointer`}
-                  onClick={() => handleDateClick(summary.date)}
-                >
-                  <div className="font-medium">{formatDate(summary.date)}</div>
-                  <div>
-                    <span className="font-medium text-green-600 dark:text-green-400">{summary.reconciled_count}</span>
-                    <span className="text-muted-foreground text-xs ml-2">{formatCurrency(summary.reconciled_amount)}</span>
-                  </div>
-                  <div>
-                    <span className="font-medium">{summary.pending_count}</span>
-                    <span className="text-muted-foreground text-xs ml-2">{formatCurrency(summary.pending_amount)}</span>
-                  </div>
-                  <div>
-                    <span className="font-medium">{summary.total_count}</span>
-                    <span className="text-muted-foreground text-xs ml-2">{formatCurrency(summary.total_amount)}</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className={`font-bold ${
-                      summary.reconciliation_percentage === 100 ? 'text-green-600' :
-                      summary.reconciliation_percentage >= 80 ? 'text-yellow-600' :
-                      'text-orange-600'
-                    }`}>
-                      {summary.reconciliation_percentage}%
-                    </span>
+          <CardHeader>
+            <CardTitle>Daily Discrepancy Summary</CardTitle>
+            <CardDescription>
+              Comparison of totals across Kingdom CRM, Ledger, and Bank Statement.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm text-left">
+                <thead className="bg-muted/50 text-xs uppercase font-semibold">
+                  <tr>
+                    <th className="px-4 py-3">Date</th>
+                    <th className="px-4 py-3 text-right">Kingdom CRM</th>
+                    <th className="px-4 py-3 text-right">Ledger</th>
+                    <th className="px-4 py-3 text-right">Bank</th>
+                    <th className="px-4 py-3 text-center">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {loadingDiscrepancies ? (
+                    <tr><td colSpan={5} className="p-8 text-center"><Loader2 className="h-6 w-6 animate-spin mx-auto" /></td></tr>
+                  ) : discrepancies?.length === 0 ? (
+                    <tr><td colSpan={5} className="p-8 text-center text-muted-foreground">No data for selected range.</td></tr>
+                  ) : discrepancies?.map((row) => {
+                    const systemMatch = Math.abs(row.kingdom_sum - row.ledger_sum) < 0.01;
+                    const bankMatch = Math.abs(row.ledger_sum - row.bank_sum) < 0.01;
+                    
+                    return (
+                      <tr key={row.date} className="hover:bg-muted/30">
+                        <td className="px-4 py-3 font-medium">{formatDate(row.date)}</td>
+                        <td className={`px-4 py-3 text-right font-mono ${!systemMatch ? 'text-red-500 font-bold' : ''}`}>
+                          {formatCurrency(row.kingdom_sum)}
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono">
+                          {formatCurrency(row.ledger_sum)}
+                        </td>
+                        <td className={`px-4 py-3 text-right font-mono ${!bankMatch ? 'text-amber-500 font-bold' : ''}`}>
+                          {formatCurrency(row.bank_sum)}
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          {systemMatch && bankMatch ? (
+                            <Badge variant="outline" className="text-green-600 bg-green-50">Balanced</Badge>
+                          ) : (
+                            <Badge variant="outline" className="text-red-600 bg-red-50">Out of Sync</Badge>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      ) : (
+        <>
+          {/* Main report views */}
+          {/* Controls Card */}
+          <Card className="p-4 bg-card shadow-sm border-muted">
+            <div className="flex flex-col lg:flex-row gap-4 lg:items-end lg:justify-between">
+              {/* Date Range Section */}
+              <div className="flex flex-wrap gap-4 items-end flex-1">
+                <div className="flex-1 min-w-[200px]">
+                  <label className="text-sm font-medium mb-2 block">Date Range</label>
+                  <div className="flex gap-2">
+                    <div className="relative flex-1">
+                      <Calendar className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        type="text"
+                        placeholder="MM/DD/YYYY"
+                        value={dateFrom}
+                        onChange={(e) => {
+                          const formatted = formatUSDateInput(e.target.value);
+                          setDateFrom(formatted);
+                        }}
+                        onClick={() => openDatePicker(dateFromPickerRef)}
+                        className="pl-9 cursor-pointer"
+                        maxLength={10}
+                      />
+                      <input
+                        ref={dateFromPickerRef}
+                        type="date"
+                        lang="en-US"
+                        tabIndex={-1}
+                        aria-hidden="true"
+                        value={parseUSDateToISO(dateFrom) ?? ''}
+                        onChange={(e) => setDateFrom(e.target.value ? formatISODateToUS(e.target.value) : '')}
+                        className="absolute inset-0 h-0 w-0 opacity-0 pointer-events-none"
+                      />
+                    </div>
+                    <div className="relative flex-1">
+                      <Calendar className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        type="text"
+                        placeholder="MM/DD/YYYY"
+                        value={dateTo}
+                        onChange={(e) => {
+                          const formatted = formatUSDateInput(e.target.value);
+                          setDateTo(formatted);
+                        }}
+                        onClick={() => openDatePicker(dateToPickerRef)}
+                        className="pl-9 cursor-pointer"
+                        maxLength={10}
+                      />
+                      <input
+                        ref={dateToPickerRef}
+                        type="date"
+                        lang="en-US"
+                        tabIndex={-1}
+                        aria-hidden="true"
+                        value={parseUSDateToISO(dateTo) ?? ''}
+                        onChange={(e) => setDateTo(e.target.value ? formatISODateToUS(e.target.value) : '')}
+                        className="absolute inset-0 h-0 w-0 opacity-0 pointer-events-none"
+                      />
+                    </div>
                   </div>
                 </div>
-              ))
-            )}
-          </div>
-        </Card>
-      )}
+                <div className="flex gap-2">
+                  <Button onClick={handleApplyFilters} disabled={!filtersChanged} size="sm">
+                    Apply
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={handleClearFilters}
+                    disabled={!hasActiveFilters && dateFrom === '' && dateTo === ''}
+                    size="sm"
+                  >
+                    Clear
+                  </Button>
+                </div>
+              </div>
 
-      {/* Monthly Calendar View */}
-      {view === 'monthly' && (
-        <MonthlyCalendarView
-          dateSummaries={dateSummaries || []}
-          dateRange={{ from: effectiveStartDate, to: effectiveEndDate }}
-          onDateClick={handleDateClick}
-          initialMonth={calendarMonth}
-          initialYear={calendarYear}
-          onNavigate={handleMonthlyNavigate}
-        />
-      )}
+              {/* View Toggle */}
+              <div className="flex">
+                <ReportViewToggle view={view} onViewChange={setView} />
+              </div>
+            </div>
 
-      {/* Yearly Calendar View */}
-      {view === 'yearly' && (
-        <YearlyCalendarView
-          dateSummaries={dateSummaries || []}
-          year={calendarYear}
-          onMonthClick={handleMonthClick}
-          onNavigate={handleYearlyNavigate}
-        />
+            <p className="text-xs text-muted-foreground mt-2">
+              {view === 'list' && !hasActiveFilters && 'Default: Last 30 days'}
+              {view === 'monthly' && !hasActiveFilters && `Showing: ${formatMonthYear(calendarYear, calendarMonth)}`}
+              {view === 'yearly' && !hasActiveFilters && `Showing: ${calendarYear}`}
+              {hasActiveFilters && `Filtered: ${formatISODateToUS(effectiveStartDate)} - ${formatISODateToUS(effectiveEndDate)}`}
+            </p>
+          </Card>
+
+          {/* List View */}
+          {view === 'list' && (
+            <Card>
+              <div className={`grid ${GRID_COLS} gap-4 p-4 text-xs font-semibold border-b bg-muted/50 items-center sticky top-0 z-10`}>
+                <SortableHeader label="Date" column="date" currentSort={sortConfig} onSort={handleSort} />
+                <SortableHeader label="Reconciled" column="reconciled_count" currentSort={sortConfig} onSort={handleSort} />
+                <SortableHeader label="Pending" column="pending_count" currentSort={sortConfig} onSort={handleSort} />
+                <SortableHeader label="Total" column="total_count" currentSort={sortConfig} onSort={handleSort} />
+                <SortableHeader label="%" column="reconciliation_percentage" currentSort={sortConfig} onSort={handleSort} />
+              </div>
+
+              <div className="divide-y">
+                {sortedSummaries.length === 0 ? (
+                  <div className="p-8 text-center text-muted-foreground">
+                    <Clock className="h-12 w-12 mx-auto mb-2 opacity-50" />
+                    <p>No transactions found in the selected date range</p>
+                  </div>
+                ) : (
+                  sortedSummaries.map((summary) => (
+                    <div
+                      key={summary.date}
+                      className={`grid ${GRID_COLS} gap-4 p-4 items-center text-sm hover:bg-muted/50 transition-colors cursor-pointer`}
+                      onClick={() => handleDateClick(summary.date)}
+                    >
+                      <div className="font-medium">{formatDate(summary.date)}</div>
+                      <div>
+                        <span className="font-medium text-green-600 dark:text-green-400">{summary.reconciled_count}</span>
+                        <span className="text-muted-foreground text-xs ml-2">{formatCurrency(summary.reconciled_amount)}</span>
+                      </div>
+                      <div>
+                        <span className="font-medium">{summary.pending_count}</span>
+                        <span className="text-muted-foreground text-xs ml-2">{formatCurrency(summary.pending_amount)}</span>
+                      </div>
+                      <div>
+                        <span className="font-medium">{summary.total_count}</span>
+                        <span className="text-muted-foreground text-xs ml-2">{formatCurrency(summary.total_amount)}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className={`font-bold ${
+                          summary.reconciliation_percentage === 100 ? 'text-green-600' :
+                          summary.reconciliation_percentage >= 80 ? 'text-yellow-600' :
+                          'text-orange-600'
+                        }`}>
+                          {summary.reconciliation_percentage}%
+                        </span>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </Card>
+          )}
+
+          {/* Monthly Calendar View */}
+          {view === 'monthly' && (
+            <MonthlyCalendarView
+              dateSummaries={dateSummaries || []}
+              dateRange={{ from: effectiveStartDate, to: effectiveEndDate }}
+              onDateClick={handleDateClick}
+              initialMonth={calendarMonth}
+              initialYear={calendarYear}
+              onNavigate={handleMonthlyNavigate}
+            />
+          )}
+
+          {/* Yearly Calendar View */}
+          {view === 'yearly' && (
+            <YearlyCalendarView
+              dateSummaries={dateSummaries || []}
+              year={calendarYear}
+              onMonthClick={handleMonthClick}
+              onNavigate={handleYearlyNavigate}
+            />
+          )}
+        </>
       )}
     </div>
   );
