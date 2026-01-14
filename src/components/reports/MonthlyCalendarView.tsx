@@ -18,6 +18,7 @@ interface MonthlyCalendarViewProps {
   onDateClick: (isoDate: string) => void;
   initialMonth?: number | null;
   initialYear?: number | null;
+  onNavigate?: (year: number, month: number) => void;
 }
 
 export function MonthlyCalendarView({
@@ -26,6 +27,7 @@ export function MonthlyCalendarView({
   onDateClick,
   initialMonth,
   initialYear,
+  onNavigate,
 }: MonthlyCalendarViewProps) {
   // Initialize month/year from props or dateRange
   const [selectedYear, setSelectedYear] = useState<number>(() => {
@@ -64,12 +66,14 @@ export function MonthlyCalendarView({
     const { year, month } = getPreviousMonth(selectedYear, selectedMonth);
     setSelectedYear(year);
     setSelectedMonth(month);
+    onNavigate?.(year, month);
   };
 
   const handleNextMonth = () => {
     const { year, month } = getNextMonth(selectedYear, selectedMonth);
     setSelectedYear(year);
     setSelectedMonth(month);
+    onNavigate?.(year, month);
   };
 
   const monthYearDisplay = formatMonthYear(selectedYear, selectedMonth);

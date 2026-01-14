@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Calendar, TrendingUp, CheckCircle2, Clock } from 'lucide-react';
 import { parseUSDateToISO, formatUSDateInput, formatISODateToUS } from '@/lib/utils';
+import { getMonthDateRange, getYearDateRange, formatMonthYear } from '@/lib/calendar-utils';
 import { DateSummaryCard, type DateSummary } from '@/components/reports/DateSummaryCard';
 import { ReportViewToggle, type ViewType } from '@/components/reports/ReportViewToggle';
 import { MonthlyCalendarView } from '@/components/reports/MonthlyCalendarView';
@@ -21,8 +22,8 @@ export default function Reports() {
 
   // View state management
   const [view, setView] = useState<ViewType>('list');
-  const [selectedMonth, setSelectedMonth] = useState<number | null>(null);
-  const [selectedYear, setSelectedYear] = useState<number | null>(null);
+  const [calendarMonth, setCalendarMonth] = useState<number>(() => new Date().getMonth() + 1);
+  const [calendarYear, setCalendarYear] = useState<number>(() => new Date().getFullYear());
 
   const openDatePicker = (ref: RefObject<HTMLInputElement>) => {
     const input = ref.current;
@@ -61,19 +62,29 @@ export default function Reports() {
     setAppliedDateTo(undefined);
   };
 
-  // Calculate default date range (last 30 days)
-  const defaultDateRange = useMemo(() => {
+  // Calculate date range based on current view
+  const viewDateRange = useMemo(() => {
     const today = new Date();
-    const thirtyDaysAgo = new Date(today);
-    thirtyDaysAgo.setDate(today.getDate() - 30);
-    return {
-      from: thirtyDaysAgo.toISOString().split('T')[0],
-      to: today.toISOString().split('T')[0],
-    };
-  }, []);
 
-  const effectiveStartDate = appliedDateFrom || defaultDateRange.from;
-  const effectiveEndDate = appliedDateTo || defaultDateRange.to;
+    switch (view) {
+      case 'monthly':
+        return getMonthDateRange(calendarYear, calendarMonth);
+      case 'yearly':
+        return getYearDateRange(calendarYear);
+      case 'list':
+      default:
+        // Keep 30-day default for list view (backwards compatibility)
+        const thirtyDaysAgo = new Date(today);
+        thirtyDaysAgo.setDate(today.getDate() - 30);
+        return {
+          from: thirtyDaysAgo.toISOString().split('T')[0],
+          to: today.toISOString().split('T')[0],
+        };
+    }
+  }, [view, calendarYear, calendarMonth]);
+
+  const effectiveStartDate = appliedDateFrom || viewDateRange.from;
+  const effectiveEndDate = appliedDateTo || viewDateRange.to;
 
   const toNextDay = (isoDate: string) => {
     const [year, month, day] = isoDate.split('-').map(Number);
@@ -179,9 +190,18 @@ export default function Reports() {
   };
 
   const handleMonthClick = (month: number, year: number) => {
-    setSelectedMonth(month);
-    setSelectedYear(year);
+    setCalendarMonth(month);
+    setCalendarYear(year);
     setView('monthly');
+  };
+
+  const handleMonthlyNavigate = (year: number, month: number) => {
+    setCalendarYear(year);
+    setCalendarMonth(month);
+  };
+
+  const handleYearlyNavigate = (year: number) => {
+    setCalendarYear(year);
   };
 
   if (isLoading) {
@@ -328,7 +348,10 @@ export default function Reports() {
         </div>
 
         <p className="text-xs text-muted-foreground mt-2">
-          Default: Last 30 days
+          {view === 'list' && !hasActiveFilters && 'Default: Last 30 days'}
+          {view === 'monthly' && !hasActiveFilters && `Showing: ${formatMonthYear(calendarYear, calendarMonth)}`}
+          {view === 'yearly' && !hasActiveFilters && `Showing: ${calendarYear}`}
+          {hasActiveFilters && `Filtered: ${formatISODateToUS(effectiveStartDate)} - ${formatISODateToUS(effectiveEndDate)}`}
         </p>
       </Card>
 
@@ -360,8 +383,9 @@ export default function Reports() {
           dateSummaries={dateSummaries || []}
           dateRange={{ from: effectiveStartDate, to: effectiveEndDate }}
           onDateClick={handleDateClick}
-          initialMonth={selectedMonth}
-          initialYear={selectedYear}
+          initialMonth={calendarMonth}
+          initialYear={calendarYear}
+          onNavigate={handleMonthlyNavigate}
         />
       )}
 
@@ -369,8 +393,9 @@ export default function Reports() {
       {view === 'yearly' && (
         <YearlyCalendarView
           dateSummaries={dateSummaries || []}
-          year={selectedYear || new Date().getFullYear()}
+          year={calendarYear}
           onMonthClick={handleMonthClick}
+          onNavigate={handleYearlyNavigate}
         />
       )}
     </div>

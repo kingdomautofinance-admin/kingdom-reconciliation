@@ -9,13 +9,14 @@ interface YearlyCalendarViewProps {
   dateSummaries: DateSummary[];
   year: number;
   onMonthClick: (month: number, year: number) => void;
+  onNavigate?: (year: number) => void;
 }
 
 interface MonthStats {
   summaries: DateSummary[];
 }
 
-export function YearlyCalendarView({ dateSummaries, year: initialYear, onMonthClick }: YearlyCalendarViewProps) {
+export function YearlyCalendarView({ dateSummaries, year: initialYear, onMonthClick, onNavigate }: YearlyCalendarViewProps) {
   const [selectedYear, setSelectedYear] = useState(initialYear);
 
   // Update when initialYear changes
@@ -49,11 +50,15 @@ export function YearlyCalendarView({ dateSummaries, year: initialYear, onMonthCl
   const months = getMonthsInYear(selectedYear);
 
   const handlePreviousYear = () => {
-    setSelectedYear((prev) => prev - 1);
+    const newYear = selectedYear - 1;
+    setSelectedYear(newYear);
+    onNavigate?.(newYear);
   };
 
   const handleNextYear = () => {
-    setSelectedYear((prev) => prev + 1);
+    const newYear = selectedYear + 1;
+    setSelectedYear(newYear);
+    onNavigate?.(newYear);
   };
 
   return (

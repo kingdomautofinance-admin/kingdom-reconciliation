@@ -1,6 +1,8 @@
 import {
   startOfMonth,
   endOfMonth,
+  startOfYear,
+  endOfYear,
   eachDayOfInterval,
   format,
   getDay,
@@ -157,4 +159,28 @@ export function getPreviousMonth(year: number, month: number): { year: number; m
     return { year: year - 1, month: 12 };
   }
   return { year, month: month - 1 };
+}
+
+/**
+ * Get the ISO date range for a specific month
+ */
+export function getMonthDateRange(year: number, month: number): { from: string; to: string } {
+  const start = startOfMonth(new Date(year, month - 1, 1));
+  const end = endOfMonth(start);
+  return {
+    from: format(start, 'yyyy-MM-dd'),
+    to: format(end, 'yyyy-MM-dd'),
+  };
+}
+
+/**
+ * Get the ISO date range for a specific year
+ */
+export function getYearDateRange(year: number): { from: string; to: string } {
+  const start = startOfYear(new Date(year, 0, 1));
+  const end = endOfYear(new Date(year, 0, 1));
+  return {
+    from: format(start, 'yyyy-MM-dd'),
+    to: format(end, 'yyyy-MM-dd'),
+  };
 }
