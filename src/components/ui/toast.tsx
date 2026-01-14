@@ -16,6 +16,14 @@ interface ToastContextValue {
 
 const ToastContext = createContext<ToastContextValue | null>(null);
 
+let toastFn: (message: string, type: ToastType) => void = () => {};
+
+export const toast = ({ title, description, variant }: { title: string, description?: string, variant?: 'default' | 'destructive' }) => {
+  const message = description ? `${title}\n${description}` : title;
+  const type = variant === 'destructive' ? 'error' : 'success';
+  toastFn(message, type);
+};
+
 export function useToast() {
   const context = useContext(ToastContext);
   if (!context) {
@@ -36,6 +44,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       setToasts((prev) => prev.filter((toast) => toast.id !== id));
     }, 5000);
   };
+
+  useEffect(() => {
+    toastFn = showToast;
+  }, []);
 
   const removeToast = (id: string) => {
     setToasts((prev) => prev.filter((toast) => toast.id !== id));
