@@ -63,7 +63,7 @@ export function GoogleSheetsConnectionServiceAccount() {
   // NEW: Date range filter states
   const [filterStartDate, setFilterStartDate] = useState('');
   const [filterEndDate, setFilterEndDate] = useState('');
-  const [useFullImport, setUseFullImport] = useState(true);
+  const [useFullImport, setUseFullImport] = useState(false);
   const filterStartPickerRef = useRef<HTMLInputElement>(null);
   const filterEndPickerRef = useRef<HTMLInputElement>(null);
 
