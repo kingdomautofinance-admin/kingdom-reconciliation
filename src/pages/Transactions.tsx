@@ -208,7 +208,7 @@ export default function Transactions() {
       let query = supabase
         .from('transactions')
         .select('*')
-        .not('value', 'like', '-%')
+        .gte('value', 0)
         .order(sortConfig.column, { ascending: sortConfig.direction === 'asc', nullsFirst: false })
         .order('sheet_order', { ascending: false, nullsFirst: false });
 
@@ -276,7 +276,7 @@ export default function Transactions() {
         let query = supabase
           .from('transactions')
           .select('*', { count: 'exact', head: true })
-          .not('value', 'like', '-%');
+          .gte('value', 0);
 
         // Exclude deleted transactions from all status-based counts
         if (status && status !== 'all') {
@@ -307,7 +307,7 @@ export default function Transactions() {
         .from('transactions')
         .select('*', { count: 'exact', head: true })
         .eq('is_deleted', true)
-        .not('value', 'like', '-%');
+        .gte('value', 0);
 
       if (effectiveStartDate) {
         deletedQuery = deletedQuery.gte('date', effectiveStartDate);
