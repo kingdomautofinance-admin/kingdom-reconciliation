@@ -8,13 +8,18 @@ interface ReconciliationSettings {
   stripe_fixed_fee: number;
 }
 
-interface ReconciliationResult {
+export interface ReconciliationResult {
   matched: number;
   totalProcessed: number;
   details: MatchDetail[];
+  /** Echo of the date range the run actually used (after fall-back to MIN_DATE). */
+  appliedRange?: {
+    startDate: string;
+    endDateExclusive: string | null;
+  };
 }
 
-interface MatchDetail {
+export interface MatchDetail {
   ledgerTransaction: Transaction;
   statementTransaction: Transaction | null;
   dateMatch: number;
@@ -23,6 +28,18 @@ interface MatchDetail {
   nameMatch: number;
   overallStatus: 'CORRECT' | 'INCORRECT';
   failures: string[];
+}
+
+/**
+ * Optional date range to scope an auto-reconcile run. Mirrors the date filter
+ * the Transactions page applies to its list query so users can reconcile just
+ * what they're looking at.
+ */
+export interface ReconciliationDateRange {
+  /** Inclusive ISO start date (YYYY-MM-DD). Falls back to MIN_DATE if earlier. */
+  startDate?: string;
+  /** Exclusive ISO end date (YYYY-MM-DD); already +1 day from the user's "to". */
+  endDateExclusive?: string;
 }
 
 interface IndexedTransaction extends Transaction {
@@ -293,27 +310,47 @@ export async function findMatchForTransactionOptimized(
   return null;
 }
 
+const MIN_DATE = '2024-05-01';
+
 /**
- * Fetch all transactions with pagination to handle datasets larger than 1000 records
- * Only fetches transactions from 2024-05-01 onwards
+ * Resolve the inclusive start date for a reconciliation run, never going
+ * earlier than MIN_DATE. Exported for the alert/log so the UI can show
+ * exactly what range was used.
+ */
+function resolveStartDate(requested?: string): string {
+  if (!requested) return MIN_DATE;
+  return requested < MIN_DATE ? MIN_DATE : requested;
+}
+
+/**
+ * Fetch all transactions with pagination to handle datasets larger than 1000 records.
+ * Date range defaults to [MIN_DATE, ∞); pass `dateRange` to scope tighter.
  */
 async function fetchAllTransactions(
   tableName: 'transactions' | 'kingdom_transactions',
-  status: string
+  status: string,
+  dateRange?: ReconciliationDateRange
 ): Promise<Transaction[]> {
   const PAGE_SIZE = 1000;
-  const MIN_DATE = '2024-05-01';
+  const startDate = resolveStartDate(dateRange?.startDate);
+  const endDateExclusive = dateRange?.endDateExclusive;
   const allTransactions: Transaction[] = [];
   let hasMore = true;
   let offset = 0;
 
   while (hasMore) {
-    const { data, error } = await supabase
+    let query = supabase
       .from(tableName)
       .select('*')
       .eq('status', status)
       .is('matched_transaction_id', null)
-      .gte('date', MIN_DATE)
+      .gte('date', startDate);
+
+    if (endDateExclusive) {
+      query = query.lt('date', endDateExclusive);
+    }
+
+    const { data, error } = await query
       .order('date', { ascending: false })
       .range(offset, offset + PAGE_SIZE - 1);
 
@@ -346,12 +383,20 @@ async function fetchAllTransactions(
  * - Batched database updates (was 2 queries per match)
  * - Progress tracking for large datasets
  */
-export async function autoReconcileAllOptimized(tableName: 'transactions' | 'kingdom_transactions' = 'transactions'): Promise<ReconciliationResult> {
+export async function autoReconcileAllOptimized(
+  tableName: 'transactions' | 'kingdom_transactions' = 'transactions',
+  dateRange?: ReconciliationDateRange
+): Promise<ReconciliationResult> {
+  const appliedRange = {
+    startDate: resolveStartDate(dateRange?.startDate),
+    endDateExclusive: dateRange?.endDateExclusive ?? null,
+  };
+
   console.log('Starting OPTIMIZED auto reconciliation...');
   console.log('Criteria:');
   console.log('  • Date: exact match');
   console.log('  • Value: 100% exact match');
-  console.log('  • Minimum Date: 2024-05-01 (transactions before this date are ignored)\n');
+  console.log(`  • Date range: ${appliedRange.startDate} to ${appliedRange.endDateExclusive ?? '(no end)'}\n`);
 
   const startTime = performance.now();
 
@@ -360,8 +405,8 @@ export async function autoReconcileAllOptimized(tableName: 'transactions' | 'kin
   const fetchStartTime = performance.now();
 
   const [pendingLedger, pendingStatements] = await Promise.all([
-    fetchAllTransactions(tableName, 'pending-ledger'),
-    fetchAllTransactions(tableName, 'pending-statement')
+    fetchAllTransactions(tableName, 'pending-ledger', dateRange),
+    fetchAllTransactions(tableName, 'pending-statement', dateRange)
   ]);
 
   const fetchTime = Math.round(performance.now() - fetchStartTime);
@@ -374,7 +419,8 @@ export async function autoReconcileAllOptimized(tableName: 'transactions' | 'kin
     return {
       matched: 0,
       totalProcessed: 0,
-      details: []
+      details: [],
+      appliedRange,
     };
   }
 
@@ -392,7 +438,8 @@ export async function autoReconcileAllOptimized(tableName: 'transactions' | 'kin
         nameMatch: 0,
         overallStatus: 'INCORRECT' as const,
         failures: ['No pending-statement transactions available']
-      }))
+      })),
+      appliedRange,
     };
   }
 
@@ -531,6 +578,7 @@ export async function autoReconcileAllOptimized(tableName: 'transactions' | 'kin
   return {
     matched,
     totalProcessed: pendingLedger.length,
-    details
+    details,
+    appliedRange,
   };
 }

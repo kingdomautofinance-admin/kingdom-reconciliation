@@ -19,10 +19,12 @@ import {
   formatISODateToUS,
 } from '@/lib/utils';
 import { autoReconcileAll } from '@/lib/reconciliation';
+import type { ReconciliationResult } from '@/lib/reconciliation-optimized';
 import { fetchPreferredMinTransactionDate, fetchPaymentMethods } from '@/lib/transactionFilters';
 import { DeleteTransactionModal } from '@/components/DeleteTransactionModal';
 import { EditTransactionModal } from '@/components/EditTransactionModal';
 import { UnreconcileTransactionModal } from '@/components/UnreconcileTransactionModal';
+import { ReconciliationResultModal } from '@/components/ReconciliationResultModal';
 import { useToast } from '@/components/ui/toast';
 import { useColumnResizer } from '@/hooks/useColumnResizer';
 import { ResizeHandle } from '@/components/ui/ResizeHandle';
@@ -629,25 +631,17 @@ export default function Transactions() {
     },
   });
 
+  const [reconcileResult, setReconcileResult] = useState<ReconciliationResult | null>(null);
+
   const autoReconcileMutation = useMutation({
-    mutationFn: autoReconcileAll,
+    mutationFn: () => autoReconcileAll('transactions', {
+      startDate: effectiveStartDate,
+      endDateExclusive: effectiveEndExclusive,
+    }),
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ['transactions'] });
       queryClient.invalidateQueries({ queryKey: ['transaction-counts'] });
-
-      const summary = [
-        'RECONCILIATION COMPLETE',
-        '',
-        `Total Processed: ${result.totalProcessed}`,
-        `Reconciliation CORRECT: ${result.matched}`,
-        `Reconciliation INCORRECT: ${result.totalProcessed - result.matched}`,
-        '',
-        'Criteria:',
-        '  • Date: exact match',
-        '  • Value: 100% exact match'
-      ].join('\n');
-
-      showToast(summary, 'success');
+      setReconcileResult(result);
     },
     onError: (error) => {
       showToast(`Auto Reconcile Failed\n\n${error.message}`, 'error');
@@ -979,6 +973,11 @@ export default function Transactions() {
           }
         }}
         transaction={transactionToUnreconcile}
+      />
+
+      <ReconciliationResultModal
+        result={reconcileResult}
+        onClose={() => setReconcileResult(null)}
       />
 
       <Card>
