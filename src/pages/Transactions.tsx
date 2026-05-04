@@ -643,10 +643,8 @@ export default function Transactions() {
         `Reconciliation INCORRECT: ${result.totalProcessed - result.matched}`,
         '',
         'Criteria:',
-        '  • Date: ±2 days tolerance',
-        '  • Value: 100% exact match',
-        '  • Payment Method: 100% exact match',
-        '  • Name: ≥50% similarity (skipped for Credit Card)'
+        '  • Date: exact match',
+        '  • Value: 100% exact match'
       ].join('\n');
 
       showToast(summary, 'success');

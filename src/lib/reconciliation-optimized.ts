@@ -74,9 +74,10 @@ function checkNameMatch(trans1: any, trans2: any): number {
   return Math.round(maxSimilarity * 100);
 }
 
-// Evaluate if a candidate pair is a CORRECT match using strict criteria.
-// Used by findMatchForTransactionOptimized to validate index candidates and
-// by autoReconcileAllOptimized to populate per-match details for telemetry.
+// Evaluate if a candidate pair is a CORRECT match.
+// Per user spec: a match requires only EXACT date and EXACT value.
+// Payment method and name similarity are still computed and included in the
+// telemetry payload for visibility but are NOT enforced as match requirements.
 function evaluateReconciliation(ledger: Transaction, statement: Transaction): MatchDetail {
   const dateMatch = checkDateMatch(new Date(ledger.date), new Date(statement.date));
   const valueMatch = checkValueMatch(
@@ -93,18 +94,6 @@ function evaluateReconciliation(ledger: Transaction, statement: Transaction): Ma
   }
   if (valueMatch !== 100) {
     failures.push(`Value mismatch: ${ledger.value} vs ${statement.value} (Required: 100%, Got: ${valueMatch}%)`);
-  }
-  if (paymentMethodMatch !== 100) {
-    failures.push(`Payment method mismatch: ${ledger.payment_method} vs ${statement.payment_method} (Required: 100%, Got: ${paymentMethodMatch}%)`);
-  }
-
-  // For credit card transactions, skip the name similarity requirement
-  const isCreditCard =
-    ledger.payment_method?.toLowerCase().includes('credit card') ||
-    statement.payment_method?.toLowerCase().includes('credit card');
-
-  if (!isCreditCard && nameMatch < 50) {
-    failures.push(`Name similarity too low: (Required: ≥50%, Got: ${nameMatch}%)`);
   }
 
   return {
@@ -212,9 +201,14 @@ export async function autoReconcileSystemAudit(): Promise<ReconciliationResult> 
 
 /**
  * OPTIMIZED: Creates lookup indexes for O(1) candidate filtering
- * Instead of O(n) search for each transaction, we use hash maps
+ * Instead of O(n) search for each transaction, we use hash maps.
+ *
+ * @param includeMethod when true (default), the bucket key is `date|value|method`.
+ *   When false, it's just `date|value` so that ledger/statement entries with
+ *   differing payment_method strings (e.g. "Stripe" vs "Stripe receipt") still
+ *   land in the same bucket.
  */
-function createLookupIndex(transactions: Transaction[]): Map<string, IndexedTransaction[]> {
+function createLookupIndex(transactions: Transaction[], includeMethod = true): Map<string, IndexedTransaction[]> {
   const index = new Map<string, IndexedTransaction[]>();
 
   for (const trans of transactions) {
@@ -226,7 +220,9 @@ function createLookupIndex(transactions: Transaction[]): Map<string, IndexedTran
     ) * 100);
     const methodKey = (trans.payment_method || '').toLowerCase().trim();
 
-    const key = `${dateKey}|${valueKey}|${methodKey}`;
+    const key = includeMethod
+      ? `${dateKey}|${valueKey}|${methodKey}`
+      : `${dateKey}|${valueKey}`;
 
     const indexed: IndexedTransaction = {
       ...trans,
@@ -257,49 +253,40 @@ export async function findMatchForTransactionOptimized(
   const valueKey = Math.round(Math.abs(
     typeof transaction.value === 'string' ? parseFloat(transaction.value) : transaction.value
   ) * 100);
-  const methodKey = (transaction.payment_method || '').toLowerCase().trim();
 
-  const seenCandidates = new Set<string>();
-
-  // Only check exact same date (no offset)
+  // Match purely on EXACT date + EXACT value. payment_method is NOT part of
+  // the key — Sheets entries (e.g. "Stripe") and bank-parser auto-tagged
+  // entries (e.g. "Stripe receipt") would otherwise never align.
   const dateKey = transDate.toISOString().split('T')[0];
-  {
+  const key = `${dateKey}|${valueKey}`;
+  const candidates = candidatesIndex.get(key) || [];
 
-    const key = `${dateKey}|${valueKey}|${methodKey}`;
-    const candidates = candidatesIndex.get(key) || [];
+  for (const candidate of candidates) {
+    if (candidate.matched_transaction_id) continue;
 
-    for (const candidate of candidates) {
-      if (candidate.matched_transaction_id) continue;
-      if (seenCandidates.has(candidate.id)) continue;
-
-      seenCandidates.add(candidate.id);
-
-      const evaluation = evaluateReconciliation(transaction, candidate);
-
-      if (evaluation.overallStatus === 'CORRECT') {
-        return candidate;
-      }
+    const evaluation = evaluateReconciliation(transaction, candidate);
+    if (evaluation.overallStatus === 'CORRECT') {
+      return candidate;
     }
   }
 
-  // Stripe Fee matching logic (1-to-1)
+  // Stripe-fee fallback: for Credit Card ledger entries, also try the net
+  // amount the bank would have deposited after Stripe's fee.
   const isCreditCard = (transaction.payment_method || '').toLowerCase().includes('credit card');
   if (isCreditCard) {
     const { data: settings } = await supabase.from('reconciliation_settings').select('*').single();
     const feePercent = parseFloat(settings?.stripe_fee_percent || '2.9') / 100;
     const fixedFee = parseFloat(settings?.stripe_fixed_fee || '0.30');
-    
+
     const val = Math.abs(typeof transaction.value === 'string' ? parseFloat(transaction.value) : transaction.value);
     const expectedNet = val - (val * feePercent + fixedFee);
     const expectedNetKey = Math.round(expectedNet * 100);
 
-    const dateKey = transDate.toISOString().split('T')[0];
-    const key = `${dateKey}|${expectedNetKey}|wells fargo`; // Or other bank source
-    
-    const candidates = candidatesIndex.get(key) || [];
-    for (const candidate of candidates) {
+    const feeKey = `${dateKey}|${expectedNetKey}`;
+    const feeCandidates = candidatesIndex.get(feeKey) || [];
+    for (const candidate of feeCandidates) {
       if (candidate.matched_transaction_id) continue;
-      return candidate; // Match found via Stripe fees!
+      return candidate;
     }
   }
 
@@ -360,12 +347,10 @@ async function fetchAllTransactions(
  * - Progress tracking for large datasets
  */
 export async function autoReconcileAllOptimized(tableName: 'transactions' | 'kingdom_transactions' = 'transactions'): Promise<ReconciliationResult> {
-  console.log('Starting OPTIMIZED STRICT auto reconciliation...');
+  console.log('Starting OPTIMIZED auto reconciliation...');
   console.log('Criteria:');
-  console.log('  • Date: ±2 days tolerance');
+  console.log('  • Date: exact match');
   console.log('  • Value: 100% exact match');
-  console.log('  • Payment Method: 100% exact match');
-  console.log('  • Name: ≥50% similarity (skipped for Credit Card)');
   console.log('  • Minimum Date: 2024-05-01 (transactions before this date are ignored)\n');
 
   const startTime = performance.now();
@@ -414,9 +399,12 @@ export async function autoReconcileAllOptimized(tableName: 'transactions' | 'kin
   console.log(`Processing ${pendingLedger.length} pending-ledger transactions...`);
   console.log(`Candidates: ${pendingStatements.length} pending-statement transactions\n`);
 
-  // OPTIMIZATION 2: Create indexed lookup for O(1) search
+  // OPTIMIZATION 2: Create indexed lookup for O(1) search.
+  // Index by date+value only — payment_method strings often differ between
+  // sources (e.g. Sheets "Stripe" vs bank parser "Stripe receipt"), which
+  // would otherwise cause every lookup to miss.
   const indexTime = performance.now();
-  const candidatesIndex = createLookupIndex(pendingStatements);
+  const candidatesIndex = createLookupIndex(pendingStatements, false);
   console.log(`Index created in ${Math.round(performance.now() - indexTime)}ms`);
 
   const details: MatchDetail[] = [];
@@ -446,13 +434,14 @@ export async function autoReconcileAllOptimized(tableName: 'transactions' | 'kin
       const evaluation = evaluateReconciliation(ledgerTrans, match);
       details.push(evaluation);
 
-      // Remove from index to prevent double-matching
+      // Remove from index to prevent double-matching.
+      // Key must mirror the date+value-only format used when the index was
+      // built above (createLookupIndex(..., false)).
       const dateKey = new Date(match.date).toISOString().split('T')[0];
       const valueKey = Math.round(Math.abs(
         typeof match.value === 'string' ? parseFloat(match.value) : match.value
       ) * 100);
-      const methodKey = (match.payment_method || '').toLowerCase().trim();
-      const key = `${dateKey}|${valueKey}|${methodKey}`;
+      const key = `${dateKey}|${valueKey}`;
 
       const candidates = candidatesIndex.get(key);
       if (candidates) {
