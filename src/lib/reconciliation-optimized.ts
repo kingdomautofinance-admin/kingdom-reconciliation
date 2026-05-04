@@ -74,6 +74,51 @@ function checkNameMatch(trans1: any, trans2: any): number {
   return Math.round(maxSimilarity * 100);
 }
 
+// Evaluate if a candidate pair is a CORRECT match using strict criteria.
+// Used by findMatchForTransactionOptimized to validate index candidates and
+// by autoReconcileAllOptimized to populate per-match details for telemetry.
+function evaluateReconciliation(ledger: Transaction, statement: Transaction): MatchDetail {
+  const dateMatch = checkDateMatch(new Date(ledger.date), new Date(statement.date));
+  const valueMatch = checkValueMatch(
+    typeof ledger.value === 'string' ? parseFloat(ledger.value) : ledger.value,
+    typeof statement.value === 'string' ? parseFloat(statement.value) : statement.value
+  );
+  const paymentMethodMatch = checkPaymentMethodMatch(ledger.payment_method, statement.payment_method);
+  const nameMatch = checkNameMatch(ledger, statement);
+
+  const failures: string[] = [];
+
+  if (dateMatch !== 100) {
+    failures.push(`Date mismatch: ${ledger.date} vs ${statement.date} (Required: exact match, Got: ${dateMatch}%)`);
+  }
+  if (valueMatch !== 100) {
+    failures.push(`Value mismatch: ${ledger.value} vs ${statement.value} (Required: 100%, Got: ${valueMatch}%)`);
+  }
+  if (paymentMethodMatch !== 100) {
+    failures.push(`Payment method mismatch: ${ledger.payment_method} vs ${statement.payment_method} (Required: 100%, Got: ${paymentMethodMatch}%)`);
+  }
+
+  // For credit card transactions, skip the name similarity requirement
+  const isCreditCard =
+    ledger.payment_method?.toLowerCase().includes('credit card') ||
+    statement.payment_method?.toLowerCase().includes('credit card');
+
+  if (!isCreditCard && nameMatch < 50) {
+    failures.push(`Name similarity too low: (Required: ≥50%, Got: ${nameMatch}%)`);
+  }
+
+  return {
+    ledgerTransaction: ledger,
+    statementTransaction: statement,
+    dateMatch,
+    valueMatch,
+    paymentMethodMatch,
+    nameMatch,
+    overallStatus: failures.length === 0 ? 'CORRECT' : 'INCORRECT',
+    failures,
+  };
+}
+
 /**
  * NEW: Automated matching for System Audit (Ledger vs Kingdom CRM)
  */
