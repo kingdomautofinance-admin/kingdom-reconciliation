@@ -19,6 +19,20 @@ export interface ReconciliationResult {
   };
 }
 
+/** A statement-side row that landed on the same date as an unmatched ledger
+ *  row but with a different value — surfaced so the user can see whether
+ *  it's a data-presence problem (no candidates at all) or a value-mismatch
+ *  problem (candidates exist but $ amounts don't line up). */
+export interface NearMissCandidate {
+  id: string;
+  date: string;
+  value: string;
+  name: string | null;
+  depositor: string | null;
+  source: string;
+  payment_method: string | null;
+}
+
 export interface MatchDetail {
   ledgerTransaction: Transaction;
   statementTransaction: Transaction | null;
@@ -28,6 +42,9 @@ export interface MatchDetail {
   nameMatch: number;
   overallStatus: 'CORRECT' | 'INCORRECT';
   failures: string[];
+  /** Up to 5 statement rows on the same date as the ledger row. Empty array
+   *  means: no statement rows exist on that date at all. */
+  sameDateCandidates?: NearMissCandidate[];
 }
 
 /**
@@ -452,6 +469,18 @@ export async function autoReconcileAllOptimized(
   // would otherwise cause every lookup to miss.
   const indexTime = performance.now();
   const candidatesIndex = createLookupIndex(pendingStatements, false);
+
+  // Diagnostic-only: same-date index so we can show, for unmatched ledger
+  // rows, which statement rows landed on the same date with different values.
+  // Lets the user distinguish "no statement data exists for this date" from
+  // "data exists but the amounts are off by some delta".
+  const byDateIndex = new Map<string, Transaction[]>();
+  for (const stmt of pendingStatements) {
+    if (stmt.matched_transaction_id) continue;
+    const dateKey = new Date(stmt.date).toISOString().split('T')[0];
+    if (!byDateIndex.has(dateKey)) byDateIndex.set(dateKey, []);
+    byDateIndex.get(dateKey)!.push(stmt);
+  }
   console.log(`Index created in ${Math.round(performance.now() - indexTime)}ms`);
 
   const details: MatchDetail[] = [];
@@ -500,7 +529,26 @@ export async function autoReconcileAllOptimized(
         }
       }
     } else {
-      console.log(`✗ INCORRECT: No match found for ${ledgerTrans.name || ledgerTrans.depositor} - $${ledgerTrans.value} - ${ledgerTrans.date}`);
+      const ledgerDateKey = new Date(ledgerTrans.date).toISOString().split('T')[0];
+      const sameDate = byDateIndex.get(ledgerDateKey) || [];
+      const sameDateCandidates: NearMissCandidate[] = sameDate
+        .filter(s => !s.matched_transaction_id)
+        .slice(0, 5)
+        .map(s => ({
+          id: s.id,
+          date: s.date,
+          value: String(s.value),
+          name: s.name,
+          depositor: s.depositor,
+          source: s.source,
+          payment_method: s.payment_method,
+        }));
+
+      const failureReason = sameDateCandidates.length === 0
+        ? `No statement entries exist on ${ledgerDateKey}`
+        : `Statement entries exist on ${ledgerDateKey} but with different amounts`;
+
+      console.log(`✗ INCORRECT: ${ledgerTrans.name || ledgerTrans.depositor} - $${ledgerTrans.value} - ${ledgerTrans.date} — ${failureReason}`);
 
       details.push({
         ledgerTransaction: ledgerTrans,
@@ -510,7 +558,8 @@ export async function autoReconcileAllOptimized(
         paymentMethodMatch: 0,
         nameMatch: 0,
         overallStatus: 'INCORRECT',
-        failures: ['No matching statement transaction found with all required criteria']
+        failures: [failureReason],
+        sameDateCandidates,
       });
     }
   }
