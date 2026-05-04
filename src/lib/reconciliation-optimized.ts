@@ -281,8 +281,12 @@ export async function findMatchForTransactionOptimized(
   transaction: Transaction,
   candidatesIndex: Map<string, IndexedTransaction[]>
 ): Promise<Transaction | null> {
-  const transDate = new Date(transaction.date);
-  transDate.setHours(0, 0, 0, 0);
+  // Use the raw UTC date — same construction as createLookupIndex (line ~251)
+  // and the by-date diagnostic index. The previous version called
+  // setHours(0, 0, 0, 0) which shifts to LOCAL midnight, so for any browser
+  // running in a non-UTC timezone the lookup key landed on a different
+  // calendar day than the bucket key, and *every* match silently missed.
+  const dateKey = new Date(transaction.date).toISOString().split('T')[0];
 
   const valueKey = Math.round(Math.abs(
     typeof transaction.value === 'string' ? parseFloat(transaction.value) : transaction.value
@@ -291,7 +295,6 @@ export async function findMatchForTransactionOptimized(
   // Match purely on EXACT date + EXACT value. payment_method is NOT part of
   // the key — Sheets entries (e.g. "Stripe") and bank-parser auto-tagged
   // entries (e.g. "Stripe receipt") would otherwise never align.
-  const dateKey = transDate.toISOString().split('T')[0];
   const key = `${dateKey}|${valueKey}`;
   const candidates = candidatesIndex.get(key) || [];
 
