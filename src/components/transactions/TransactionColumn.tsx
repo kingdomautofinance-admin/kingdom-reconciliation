@@ -1,11 +1,11 @@
-import { useInfiniteQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import type { Transaction } from '@/lib/database.types';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Check, Link2, Loader2, Pencil, Trash2 } from 'lucide-react';
+import { Check, Eye, Link2, Link2Off, Loader2, Pencil, Trash2 } from 'lucide-react';
 import { SortableHeader } from '@/components/ui/SortableHeader';
 import { type SortConfig, getNextSortState } from '@/lib/sorting';
 import { formatCurrency, formatDate } from '@/lib/utils';
@@ -13,6 +13,7 @@ import { formatCurrency, formatDate } from '@/lib/utils';
 const ITEMS_PER_PAGE = 50;
 
 type ColumnSortColumn = 'date' | 'name' | 'value';
+export type ColumnMode = 'match' | 'reconciled' | 'deleted';
 
 export interface ColumnFilters {
   appliedSearchTerm: string;
@@ -22,20 +23,25 @@ export interface ColumnFilters {
 }
 
 interface TransactionColumnProps {
-  /** 'ledger' = Google Sheets (pending-ledger); 'statement' = Zelle/Credit Card (pending-statement). */
+  mode: ColumnMode;
+  /** 'ledger' = Google Sheets; 'statement' = Zelle/Credit Card (bank). */
   side: 'ledger' | 'statement';
   title: string;
-  count?: number;
   filters: ColumnFilters;
   canRunQueries: boolean;
-  selectedId: string | null;
-  /** The id selected on the OTHER side — used to disable selecting while a match is forming, if desired. */
-  onSelect: (transaction: Transaction) => void;
-  onEdit: (transaction: Transaction) => void;
-  onDelete: (transaction: Transaction) => void;
+  accent: 'blue' | 'orange';
   sortConfig: SortConfig<ColumnSortColumn>;
   onSortChange: (config: SortConfig<ColumnSortColumn>) => void;
-  accent: 'blue' | 'orange';
+  // match mode
+  selectedId?: string | null;
+  onSelect?: (transaction: Transaction) => void;
+  onEdit?: (transaction: Transaction) => void;
+  onDelete?: (transaction: Transaction) => void;
+  // reconciled mode
+  onViewMatch?: (transaction: Transaction) => void;
+  onUnmatch?: (transaction: Transaction) => void;
+  // deleted mode
+  onViewDeleteReason?: (transaction: Transaction) => void;
 }
 
 const escapeForIlike = (term: string) =>
@@ -49,66 +55,84 @@ const buildAmountCondition = (rawTerm: string) => {
   return `value.eq.${encodeURIComponent(numericValue.toString())}`;
 };
 
+const LEDGER_SOURCE_PREFIX = 'Google Sheets%';
+
 export function TransactionColumn({
+  mode,
   side,
   title,
-  count,
   filters,
   canRunQueries,
+  accent,
+  sortConfig,
+  onSortChange,
   selectedId,
   onSelect,
   onEdit,
   onDelete,
-  sortConfig,
-  onSortChange,
-  accent,
+  onViewMatch,
+  onUnmatch,
+  onViewDeleteReason,
 }: TransactionColumnProps) {
-  const status = side === 'ledger' ? 'pending-ledger' : 'pending-statement';
   const observerTarget = useRef<HTMLDivElement>(null);
   const { appliedSearchTerm, appliedMethodFilter, effectiveStartDate, effectiveEndExclusive } = filters;
 
+  // Apply the mode/side + shared filters to a query builder.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const withFilters = (query: any) => {
+    if (mode === 'match') {
+      query = query.eq('status', side === 'ledger' ? 'pending-ledger' : 'pending-statement').eq('is_deleted', false);
+    } else {
+      // reconciled / deleted: both sides share a status, so split by source.
+      query = side === 'ledger'
+        ? query.ilike('source', LEDGER_SOURCE_PREFIX)
+        : query.not('source', 'ilike', LEDGER_SOURCE_PREFIX);
+      query = mode === 'deleted'
+        ? query.eq('is_deleted', true)
+        : query.eq('status', 'reconciled').eq('is_deleted', false);
+    }
+
+    if (effectiveStartDate) query = query.gte('date', effectiveStartDate);
+    if (effectiveEndExclusive) query = query.lt('date', effectiveEndExclusive);
+    if (appliedMethodFilter) query = query.eq('payment_method', appliedMethodFilter);
+
+    if (appliedSearchTerm) {
+      const sanitizedTerm = escapeForIlike(appliedSearchTerm);
+      const searchPattern = `*${sanitizedTerm}*`;
+      const orConditions = [
+        `name.ilike.${searchPattern}`,
+        `depositor.ilike.${searchPattern}`,
+        `car.ilike.${searchPattern}`,
+        `historical_text.ilike.${searchPattern}`,
+        `source.ilike.${searchPattern}`,
+      ];
+      const amountCondition = buildAmountCondition(appliedSearchTerm);
+      if (amountCondition) orConditions.push(amountCondition);
+      query = query.or(orConditions.join(','));
+    }
+
+    return query;
+  };
+
+  const filterKey = [
+    mode,
+    side,
+    appliedSearchTerm,
+    appliedMethodFilter,
+    effectiveStartDate ?? null,
+    effectiveEndExclusive ?? null,
+  ];
+
   const { data, fetchNextPage, hasNextPage, isFetchingNextPage, isLoading } = useInfiniteQuery<Transaction[]>({
-    queryKey: [
-      'transactions-column',
-      side,
-      appliedSearchTerm,
-      appliedMethodFilter,
-      effectiveStartDate ?? null,
-      effectiveEndExclusive ?? null,
-      sortConfig.column,
-      sortConfig.direction,
-    ],
+    queryKey: ['transactions-column', ...filterKey, sortConfig.column, sortConfig.direction],
     queryFn: async ({ pageParam = 0 }) => {
       const start = pageParam as number;
       const end = start + ITEMS_PER_PAGE - 1;
-
-      let query = supabase
-        .from('transactions')
-        .select('*')
-        .gte('value', 0)
-        .eq('status', status)
-        .eq('is_deleted', false)
+      const query = withFilters(
+        supabase.from('transactions').select('*').gte('value', 0),
+      )
         .order(sortConfig.column, { ascending: sortConfig.direction === 'asc', nullsFirst: false })
         .order('sheet_order', { ascending: false, nullsFirst: false });
-
-      if (effectiveStartDate) query = query.gte('date', effectiveStartDate);
-      if (effectiveEndExclusive) query = query.lt('date', effectiveEndExclusive);
-      if (appliedMethodFilter) query = query.eq('payment_method', appliedMethodFilter);
-
-      if (appliedSearchTerm) {
-        const sanitizedTerm = escapeForIlike(appliedSearchTerm);
-        const searchPattern = `*${sanitizedTerm}*`;
-        const orConditions = [
-          `name.ilike.${searchPattern}`,
-          `depositor.ilike.${searchPattern}`,
-          `car.ilike.${searchPattern}`,
-          `historical_text.ilike.${searchPattern}`,
-          `source.ilike.${searchPattern}`,
-        ];
-        const amountCondition = buildAmountCondition(appliedSearchTerm);
-        if (amountCondition) orConditions.push(amountCondition);
-        query = query.or(orConditions.join(','));
-      }
 
       const { data, error } = await query.range(start, end);
       if (error) throw error;
@@ -121,7 +145,27 @@ export function TransactionColumn({
     enabled: canRunQueries,
   });
 
+  const { data: count } = useQuery({
+    queryKey: ['transactions-column-count', ...filterKey],
+    staleTime: 30000,
+    enabled: canRunQueries,
+    queryFn: async () => {
+      const { count, error } = await withFilters(
+        supabase.from('transactions').select('*', { count: 'exact', head: true }).gte('value', 0),
+      );
+      if (error) throw error;
+      return count || 0;
+    },
+  });
+
   const rows = useMemo(() => data?.pages.flat() ?? [], [data]);
+  const loadedTotal = useMemo(
+    () => rows.reduce((sum, t) => {
+      const n = parseFloat(String(t.value ?? '0').replace(/[^\d.-]/g, ''));
+      return Number.isNaN(n) ? sum : sum + n;
+    }, 0),
+    [rows],
+  );
 
   useEffect(() => {
     const observer = new IntersectionObserver(
@@ -154,7 +198,7 @@ export function TransactionColumn({
           <h2 className="text-sm font-semibold">{title}</h2>
         </div>
         {typeof count === 'number' && (
-          <Badge variant="secondary" className="text-xs">{count} pending</Badge>
+          <Badge variant="secondary" className="text-xs">{count}</Badge>
         )}
       </div>
 
@@ -170,77 +214,142 @@ export function TransactionColumn({
         {isLoading ? (
           <div className="p-8 text-center"><Loader2 className="mx-auto h-6 w-6 animate-spin text-muted-foreground" /></div>
         ) : rows.length === 0 ? (
-          <div className="p-8 text-center text-sm text-muted-foreground">No pending transactions.</div>
+          <div className="p-8 text-center text-sm text-muted-foreground">
+            {mode === 'match' ? 'No pending transactions.' : mode === 'reconciled' ? 'No reconciled transactions.' : 'No deleted transactions.'}
+          </div>
         ) : (
-          rows.map((t) => {
-            const isSelected = selectedId === t.id;
-            return (
-              <div
-                key={t.id}
-                role="button"
-                tabIndex={0}
-                onClick={() => onSelect(t)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    onSelect(t);
-                  }
-                }}
-                className={`group grid grid-cols-[auto_1fr_auto] items-center gap-3 px-4 py-2.5 cursor-pointer transition-colors ${
-                  isSelected ? `ring-2 ring-inset ${accentRing}` : 'hover:bg-muted/50'
-                }`}
-              >
-                <div
-                  className={`flex h-6 w-6 items-center justify-center rounded-full border ${
-                    isSelected ? `${accentDot} border-transparent text-white` : 'border-muted-foreground/30 text-transparent'
-                  }`}
-                >
-                  {isSelected ? <Check className="h-3.5 w-3.5" /> : <Link2 className="h-3.5 w-3.5 text-muted-foreground/40" />}
-                </div>
-
-                <div className="min-w-0">
-                  <div className="text-[11px] text-muted-foreground">{formatDate(t.date)}</div>
-                  <div className="truncate text-xs font-medium" title={t.name || t.depositor || ''}>
-                    {t.name || t.depositor || '-'}
-                  </div>
-                  {(t.car || t.payment_method) && (
-                    <div className="truncate text-[11px] text-muted-foreground">
-                      {[t.car, t.payment_method].filter(Boolean).join(' · ')}
-                    </div>
-                  )}
-                </div>
-
-                <div className="flex items-center gap-1">
-                  <span className="font-mono text-xs font-semibold whitespace-nowrap">{formatCurrency(t.value)}</span>
-                  <div className="flex opacity-0 group-hover:opacity-100 transition-opacity">
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-7 w-7"
-                      onClick={(e) => { e.stopPropagation(); onEdit(t); }}
-                      title="Edit transaction"
-                    >
-                      <Pencil className="h-3.5 w-3.5" />
-                    </Button>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-7 w-7"
-                      onClick={(e) => { e.stopPropagation(); onDelete(t); }}
-                      title="Delete transaction"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            );
-          })
+          rows.map((t) => (
+            <ColumnRow
+              key={t.id}
+              t={t}
+              mode={mode}
+              accentRing={accentRing}
+              accentDot={accentDot}
+              isSelected={selectedId === t.id}
+              onSelect={onSelect}
+              onEdit={onEdit}
+              onDelete={onDelete}
+              onViewMatch={onViewMatch}
+              onUnmatch={onUnmatch}
+              onViewDeleteReason={onViewDeleteReason}
+            />
+          ))
         )}
         <div ref={observerTarget} className="py-3 text-center text-xs text-muted-foreground">
-          {isFetchingNextPage ? 'Loading more...' : rows.length > 0 ? `${rows.length} shown` : ''}
+          {isFetchingNextPage ? 'Loading more...' : rows.length > 0 ? `${rows.length} shown · ${formatCurrency(loadedTotal)}` : ''}
         </div>
       </div>
     </Card>
+  );
+}
+
+function ColumnRow({
+  t,
+  mode,
+  accentRing,
+  accentDot,
+  isSelected,
+  onSelect,
+  onEdit,
+  onDelete,
+  onViewMatch,
+  onUnmatch,
+  onViewDeleteReason,
+}: {
+  t: Transaction;
+  mode: ColumnMode;
+  accentRing: string;
+  accentDot: string;
+  isSelected: boolean;
+  onSelect?: (t: Transaction) => void;
+  onEdit?: (t: Transaction) => void;
+  onDelete?: (t: Transaction) => void;
+  onViewMatch?: (t: Transaction) => void;
+  onUnmatch?: (t: Transaction) => void;
+  onViewDeleteReason?: (t: Transaction) => void;
+}) {
+  const content = (
+    <div className="min-w-0">
+      <div className="text-[11px] text-muted-foreground">{formatDate(t.date)}</div>
+      <div className="truncate text-xs font-medium" title={t.name || t.depositor || ''}>
+        {t.name || t.depositor || '-'}
+      </div>
+      {(t.car || t.payment_method) && (
+        <div className="truncate text-[11px] text-muted-foreground">
+          {[t.car, t.payment_method].filter(Boolean).join(' · ')}
+        </div>
+      )}
+    </div>
+  );
+
+  const amount = <span className="font-mono text-xs font-semibold whitespace-nowrap">{formatCurrency(t.value)}</span>;
+
+  if (mode === 'match') {
+    return (
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => onSelect?.(t)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onSelect?.(t);
+          }
+        }}
+        className={`group grid grid-cols-[auto_1fr_auto] items-center gap-3 px-4 py-2.5 cursor-pointer transition-colors ${
+          isSelected ? `ring-2 ring-inset ${accentRing}` : 'hover:bg-muted/50'
+        }`}
+      >
+        <div
+          className={`flex h-6 w-6 items-center justify-center rounded-full border ${
+            isSelected ? `${accentDot} border-transparent text-white` : 'border-muted-foreground/30'
+          }`}
+        >
+          {isSelected ? <Check className="h-3.5 w-3.5" /> : <Link2 className="h-3.5 w-3.5 text-muted-foreground/40" />}
+        </div>
+        {content}
+        <div className="flex items-center gap-1">
+          {amount}
+          <div className="flex opacity-0 group-hover:opacity-100 transition-opacity">
+            <Button size="icon" variant="ghost" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); onEdit?.(t); }} title="Edit transaction">
+              <Pencil className="h-3.5 w-3.5" />
+            </Button>
+            <Button size="icon" variant="ghost" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); onDelete?.(t); }} title="Delete transaction">
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (mode === 'reconciled') {
+    return (
+      <div className="group grid grid-cols-[1fr_auto] items-center gap-3 px-4 py-2.5 hover:bg-muted/50 transition-colors">
+        {content}
+        <div className="flex items-center gap-1">
+          {amount}
+          <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => onViewMatch?.(t)} title="View matched transaction">
+            <Eye className="h-3.5 w-3.5" />
+          </Button>
+          <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => onUnmatch?.(t)} title="Unmatch transaction">
+            <Link2Off className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  // deleted
+  return (
+    <div className="group grid grid-cols-[1fr_auto] items-center gap-3 px-4 py-2.5 opacity-70 hover:opacity-100 hover:bg-muted/50 transition-all">
+      {content}
+      <div className="flex items-center gap-1">
+        {amount}
+        <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => onViewDeleteReason?.(t)} title="View deletion reason and restore">
+          <Eye className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+    </div>
   );
 }

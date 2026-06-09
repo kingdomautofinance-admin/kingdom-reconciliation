@@ -3,8 +3,8 @@ import { useQuery } from '@tanstack/react-query';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { X, Link2Off, Loader2, ArrowRight } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
 import type { Transaction } from '@/lib/database.types';
+import { getMatchedCounterpart } from '@/lib/matchWriter';
 import { formatCurrency, formatDate } from '@/lib/utils';
 
 interface UnmatchTransactionModalProps {
@@ -52,17 +52,9 @@ export function UnmatchTransactionModal({
   // Show the matched counterpart for confirmation (best-effort; may live in
   // another table for System matches, in which case we just omit it).
   const { data: matched } = useQuery<Transaction | null>({
-    queryKey: ['transaction', 'unmatch-preview', transaction?.matched_transaction_id],
-    queryFn: async () => {
-      if (!transaction?.matched_transaction_id) return null;
-      const { data } = await supabase
-        .from('transactions')
-        .select('*')
-        .eq('id', transaction.matched_transaction_id)
-        .maybeSingle();
-      return (data as Transaction) ?? null;
-    },
-    enabled: isOpen && !!transaction?.matched_transaction_id,
+    queryKey: ['transaction', 'unmatch-preview', transaction?.id, transaction?.matched_transaction_id],
+    queryFn: async () => (transaction ? getMatchedCounterpart(transaction) : null),
+    enabled: isOpen && !!transaction,
   });
 
   if (!isOpen || !transaction) return null;
