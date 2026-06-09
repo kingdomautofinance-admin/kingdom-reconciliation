@@ -16,23 +16,27 @@ export default function Dashboard() {
           .from('transactions')
           .select('*', { count: 'exact', head: true })
           .eq('is_deleted', false)
+          .gte('value', 0)
           .gte('date', MIN_DATE),
         supabase
           .from('transactions')
           .select('*', { count: 'exact', head: true })
           .eq('is_deleted', false)
+          .gte('value', 0)
           .eq('status', 'reconciled')
           .gte('date', MIN_DATE),
         supabase
           .from('transactions')
           .select('*', { count: 'exact', head: true })
           .eq('is_deleted', false)
+          .gte('value', 0)
           .eq('status', 'pending-ledger')
           .gte('date', MIN_DATE),
         supabase
           .from('transactions')
           .select('*', { count: 'exact', head: true })
           .eq('is_deleted', false)
+          .gte('value', 0)
           .eq('status', 'pending-statement')
           .gte('date', MIN_DATE)
       ]);
@@ -54,6 +58,7 @@ export default function Dashboard() {
             .from('transactions')
             .select('value')
             .eq('is_deleted', false)
+            .gte('value', 0)
             .gte('date', MIN_DATE)
             .range(offset, offset + PAGE_SIZE - 1);
 

@@ -107,7 +107,10 @@ export default function Reports() {
   const { data: dateSummaries, isLoading } = useQuery<DateSummary[]>({
     queryKey: ['reports-date-summaries', effectiveStartDate, effectiveEndDate],
     queryFn: async () => {
-      // Fetch all transactions in the date range (excluding deleted)
+      // Fetch all transactions in the date range. Excludes deleted rows and
+      // negative-value bank debits (value < 0) so the reconciliation counts match
+      // what the Transactions page shows (it also filters value >= 0); otherwise
+      // outgoing debits — which are never reconciled — sit in the denominator.
       // Using pagination to overcome Supabase's default 1000 row limit
       const PAGE_SIZE = 1000;
       let allTransactions: { date: string; value: string; status: string }[] = [];
@@ -119,6 +122,7 @@ export default function Reports() {
           .from('transactions')
           .select('date, value, status')
           .eq('is_deleted', false)
+          .gte('value', 0)
           .gte('date', effectiveStartDate)
           .lt('date', effectiveEndExclusive)
           .order('date', { ascending: false })
