@@ -1,14 +1,14 @@
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
 import { useState, useRef, useMemo, useEffect, type RefObject } from 'react';
-import { useLocation, useSearch } from 'wouter';
+import { useSearch } from 'wouter';
 import { supabase } from '@/lib/supabase';
-import type { Transaction, ReconciliationStatus } from '@/lib/database.types';
+import type { Transaction } from '@/lib/database.types';
 import { queryClient } from '@/lib/queryClient';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Eye, Search, CheckCircle2, Loader2, Link2, Link2Off, Calendar, Trash2, Pencil, ChevronDown } from 'lucide-react';
+import { Eye, Search, CheckCircle2, Loader2, Link2Off, Calendar, ChevronDown, ArrowRight, X } from 'lucide-react';
 import { SortableHeader } from '@/components/ui/SortableHeader';
 import { type SortConfig, getNextSortState } from '@/lib/sorting';
 import {
@@ -18,13 +18,19 @@ import {
   formatUSDateInput,
   formatISODateToUS,
 } from '@/lib/utils';
-import { autoReconcileAll } from '@/lib/reconciliation';
-import type { ReconciliationResult } from '@/lib/reconciliation-optimized';
+import {
+  computeReconciliationProposals,
+  applyMatches,
+  type MatchProposal,
+  type ReconciliationProposalsResult,
+} from '@/lib/reconciliation-optimized';
+import { applyStatementMatch, undoStatementMatch, type MatchActor } from '@/lib/matchWriter';
 import { fetchPreferredMinTransactionDate, fetchPaymentMethods } from '@/lib/transactionFilters';
 import { DeleteTransactionModal } from '@/components/DeleteTransactionModal';
 import { EditTransactionModal } from '@/components/EditTransactionModal';
-import { UnreconcileTransactionModal } from '@/components/UnreconcileTransactionModal';
-import { ReconciliationResultModal } from '@/components/ReconciliationResultModal';
+import { UnmatchTransactionModal } from '@/components/UnmatchTransactionModal';
+import { AutoReconcileReviewModal } from '@/components/AutoReconcileReviewModal';
+import { TransactionColumn, type ColumnFilters } from '@/components/transactions/TransactionColumn';
 import { useToast } from '@/components/ui/toast';
 import { useColumnResizer } from '@/hooks/useColumnResizer';
 import { ResizeHandle } from '@/components/ui/ResizeHandle';
@@ -33,6 +39,12 @@ const TRANSACTIONS_PER_PAGE = 50;
 const DEFAULT_COLUMN_WIDTHS = ['100px', '1fr', '180px', '100px', '100px', '100px', '80px', '140px'];
 
 type TransactionSortColumn = 'date' | 'name' | 'car' | 'payment_method' | 'value' | 'status' | 'confidence';
+type ColumnSortColumn = 'date' | 'name' | 'value';
+type ViewMode = 'match' | 'reconciled' | 'deleted';
+
+// No authenticated identity yet — Supabase Auth lands in a later phase. The match
+// writer already accepts the actor, so wiring real users later is a one-line swap.
+const ACTOR: MatchActor = { userId: null, userEmail: null };
 
 const escapeForIlike = (term: string) =>
   term.replace(/([*\\])/g, '\\$1').replace(/,/g, '\\,').replace(/_/g, '\\_').replace(/%/g, '\\%');
@@ -47,12 +59,10 @@ const buildAmountCondition = (rawTerm: string) => {
 
 export default function Transactions() {
   const { showToast } = useToast();
-  const [location] = useLocation();
   const searchString = useSearch();
 
   const { widths, updateWidth, gridTemplateColumns } = useColumnResizer('transactions-grid-cols', DEFAULT_COLUMN_WIDTHS);
 
-  // Parse URL query parameters for date filtering
   const urlParams = useMemo(() => {
     const params = new URLSearchParams(searchString);
     return {
@@ -64,18 +74,27 @@ export default function Transactions() {
 
   const [searchTerm, setSearchTerm] = useState('');
   const [sortConfig, setSortConfig] = useState<SortConfig<TransactionSortColumn>>({ column: 'date', direction: 'desc' });
-  const [statusFilter, setStatusFilter] = useState<ReconciliationStatus | 'all' | 'deleted'>('all');
+  const [viewMode, setViewMode] = useState<ViewMode>('match');
   const [methodFilter, setMethodFilter] = useState('');
-  const [selectedForMatch, setSelectedForMatch] = useState<Transaction | null>(null);
   const [dateFrom, setDateFrom] = useState(urlParams.dateFrom);
   const [dateTo, setDateTo] = useState(urlParams.dateTo);
+
+  // Match-mode selection (one per side) + per-side sort.
+  const [selectedLedger, setSelectedLedger] = useState<Transaction | null>(null);
+  const [selectedStatement, setSelectedStatement] = useState<Transaction | null>(null);
+  const [matchNote, setMatchNote] = useState('');
+  const [ledgerSort, setLedgerSort] = useState<SortConfig<ColumnSortColumn>>({ column: 'date', direction: 'desc' });
+  const [statementSort, setStatementSort] = useState<SortConfig<ColumnSortColumn>>({ column: 'date', direction: 'desc' });
+
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [deleteModalMode, setDeleteModalMode] = useState<'delete' | 'view'>('delete');
   const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [transactionToEdit, setTransactionToEdit] = useState<Transaction | null>(null);
-  const [unreconcileModalOpen, setUnreconcileModalOpen] = useState(false);
-  const [transactionToUnreconcile, setTransactionToUnreconcile] = useState<Transaction | null>(null);
+  const [unmatchModalOpen, setUnmatchModalOpen] = useState(false);
+  const [transactionToUnmatch, setTransactionToUnmatch] = useState<Transaction | null>(null);
+  const [reviewState, setReviewState] = useState<ReconciliationProposalsResult | null>(null);
+
   const observerTarget = useRef<HTMLDivElement>(null);
   const dateFromPickerRef = useRef<HTMLInputElement>(null);
   const dateToPickerRef = useRef<HTMLInputElement>(null);
@@ -84,11 +103,6 @@ export default function Transactions() {
     if (input && typeof input.showPicker === 'function') {
       input.showPicker();
     }
-  };
-  const handleStatusFilterChange = (nextFilter: ReconciliationStatus | 'all' | 'deleted') => {
-    setStatusFilter(nextFilter);
-    void queryClient.invalidateQueries({ queryKey: ['transactions', 'infinite'] });
-    void queryClient.invalidateQueries({ queryKey: ['transaction-counts'] });
   };
 
   const handleSort = (column: TransactionSortColumn) => {
@@ -118,14 +132,12 @@ export default function Transactions() {
 
   const hasActiveFilters = filtersChanged;
 
-  // Sync state with URL params on mount
   useEffect(() => {
     if (urlParams.dateFrom || urlParams.dateTo || urlParams.search) {
       setSearchTerm(urlParams.search);
       setDateFrom(urlParams.dateFrom);
       setDateTo(urlParams.dateTo);
-      
-      // Update visible input fields
+
       if (dateFromPickerRef.current) {
         dateFromPickerRef.current.value = normalizeDateInput(urlParams.dateFrom) || '';
       }
@@ -195,6 +207,15 @@ export default function Transactions() {
 
   const canRunQueries = !isLoadingPreferredMinDate || isPreferredMinDateError;
 
+  const columnFilters: ColumnFilters = {
+    appliedSearchTerm,
+    appliedMethodFilter,
+    effectiveStartDate,
+    effectiveEndExclusive,
+  };
+
+  // Single table query — only used for the Reconciled / Deleted views.
+  const isTableMode = viewMode === 'reconciled' || viewMode === 'deleted';
   const {
     data,
     fetchNextPage,
@@ -202,7 +223,7 @@ export default function Transactions() {
     isFetchingNextPage,
     isLoading,
   } = useInfiniteQuery<Transaction[]>({
-    queryKey: ['transactions', 'infinite', statusFilter, appliedSearchTerm, appliedMethodFilter, effectiveStartDate ?? null, appliedIsoDateTo ?? null, minDate ?? null, sortConfig.column, sortConfig.direction],
+    queryKey: ['transactions', 'table', viewMode, appliedSearchTerm, appliedMethodFilter, effectiveStartDate ?? null, appliedIsoDateTo ?? null, minDate ?? null, sortConfig.column, sortConfig.direction],
     queryFn: async ({ pageParam = 0 }) => {
       const start = pageParam as number;
       const end = start + TRANSACTIONS_PER_PAGE - 1;
@@ -218,12 +239,10 @@ export default function Transactions() {
         query = query.gte('date', effectiveStartDate);
       }
 
-      if (statusFilter === 'deleted') {
+      if (viewMode === 'deleted') {
         query = query.eq('is_deleted', true);
-      } else if (statusFilter !== 'all') {
-        query = query.eq('status', statusFilter).eq('is_deleted', false);
       } else {
-        // For 'all', we don't filter by is_deleted to show everything
+        query = query.eq('status', 'reconciled').eq('is_deleted', false);
       }
       if (effectiveEndExclusive) {
         query = query.lt('date', effectiveEndExclusive);
@@ -234,8 +253,6 @@ export default function Transactions() {
       }
 
       if (appliedSearchTerm) {
-        // Build OR conditions for searching across multiple columns
-        // The .or() method automatically wraps conditions in parentheses
         const sanitizedTerm = escapeForIlike(appliedSearchTerm);
         const searchPattern = `*${sanitizedTerm}*`;
         const orConditions = [
@@ -250,7 +267,7 @@ export default function Transactions() {
         if (amountCondition) {
           orConditions.push(amountCondition);
         }
-        
+
         query = query.or(orConditions.join(','));
       }
 
@@ -265,10 +282,10 @@ export default function Transactions() {
     },
     initialPageParam: 0,
     staleTime: 30000,
-    enabled: canRunQueries,
+    enabled: canRunQueries && isTableMode,
   });
 
-  const allTransactions = data?.pages.flat() || [];
+  const tableTransactions = useMemo(() => data?.pages.flat() || [], [data]);
 
   const { data: counts } = useQuery({
     queryKey: ['transaction-counts', effectiveStartDate ?? null, appliedIsoDateTo ?? null, minDate ?? null],
@@ -280,11 +297,9 @@ export default function Transactions() {
           .select('*', { count: 'exact', head: true })
           .gte('value', 0);
 
-        // Exclude deleted transactions from all status-based counts
         if (status && status !== 'all') {
           query = query.eq('status', status).eq('is_deleted', false);
         } else if (!status || status === 'all') {
-          // For 'all', exclude deleted transactions
           query = query.eq('is_deleted', false);
         }
 
@@ -299,12 +314,10 @@ export default function Transactions() {
         return query;
       };
 
-      const { count: totalCount, error: totalError } = await buildCountQuery();
       const { count: reconciledCount, error: reconciledError } = await buildCountQuery('reconciled');
       const { count: pendingLedgerCount, error: pendingLedgerError } = await buildCountQuery('pending-ledger');
       const { count: pendingStatementCount, error: pendingStatementError } = await buildCountQuery('pending-statement');
-      
-      // Count deleted transactions separately
+
       let deletedQuery = supabase
         .from('transactions')
         .select('*', { count: 'exact', head: true })
@@ -317,15 +330,14 @@ export default function Transactions() {
       if (effectiveEndExclusive) {
         deletedQuery = deletedQuery.lt('date', effectiveEndExclusive);
       }
-      
+
       const { count: deletedCount, error: deletedError } = await deletedQuery;
 
-      if (totalError || reconciledError || pendingLedgerError || pendingStatementError || deletedError) {
-        throw totalError || reconciledError || pendingLedgerError || pendingStatementError || deletedError;
+      if (reconciledError || pendingLedgerError || pendingStatementError || deletedError) {
+        throw reconciledError || pendingLedgerError || pendingStatementError || deletedError;
       }
 
       return {
-        all: totalCount || 0,
         reconciled: reconciledCount || 0,
         'pending-ledger': pendingLedgerCount || 0,
         'pending-statement': pendingStatementCount || 0,
@@ -335,66 +347,41 @@ export default function Transactions() {
     enabled: canRunQueries,
   });
 
-  const filteredTransactions = useMemo(() => allTransactions, [allTransactions]);
-
   const filteredTotal = useMemo(() => {
-    return filteredTransactions.reduce((sum, transaction) => {
-      // Exclude deleted transactions from totals unless viewing deleted filter
-      if (transaction.is_deleted && statusFilter !== 'deleted') {
-        return sum;
-      }
+    return tableTransactions.reduce((sum, transaction) => {
       const rawValue = transaction.value;
       const numeric = typeof rawValue === 'number'
         ? rawValue
         : parseFloat((rawValue ?? '0').toString().replace(/[^\d.-]/g, ''));
-      if (Number.isNaN(numeric)) {
-        return sum;
-      }
+      if (Number.isNaN(numeric)) return sum;
       return sum + numeric;
     }, 0);
-  }, [filteredTransactions, statusFilter]);
+  }, [tableTransactions]);
 
-  const manualReconcileMutation = useMutation({
-    mutationFn: async ({ transaction1, transaction2 }: { transaction1: Transaction; transaction2: Transaction }) => {
-      const { error: error1 } = await supabase
-        .from('transactions')
-        .update({
-          status: 'reconciled',
-          matched_transaction_id: transaction2.id,
-          confidence: 100,
-        })
-        .eq('id', transaction1.id);
+  const invalidateLists = () => {
+    queryClient.invalidateQueries({ queryKey: ['transactions-column'] });
+    queryClient.invalidateQueries({ queryKey: ['transactions', 'table'] });
+    queryClient.invalidateQueries({ queryKey: ['transaction-counts'] });
+  };
 
-      if (error1) throw error1;
-
-      const { error: error2 } = await supabase
-        .from('transactions')
-        .update({
-          status: 'reconciled',
-          matched_transaction_id: transaction1.id,
-          confidence: 100,
-        })
-        .eq('id', transaction2.id);
-
-      if (error2) throw error2;
-
-      return { transaction1, transaction2 };
-    },
+  const manualMatchMutation = useMutation({
+    mutationFn: async ({ ledger, statement, note }: { ledger: Transaction; statement: Transaction; note?: string }) =>
+      applyStatementMatch(ledger, statement, { source: 'manual', note, ...ACTOR }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['transactions'] });
-      queryClient.invalidateQueries({ queryKey: ['transaction-counts'] });
-      setSelectedForMatch(null);
-      showToast('Manual reconciliation successful!', 'success');
+      invalidateLists();
+      setSelectedLedger(null);
+      setSelectedStatement(null);
+      setMatchNote('');
+      showToast('Match created successfully!', 'success');
     },
-    onError: (error) => {
-      showToast(`Manual reconciliation failed\n\n${error.message}`, 'error');
-      console.error('Manual reconcile error:', error);
+    onError: (error: Error) => {
+      showToast(`Match failed\n\n${error.message}`, 'error');
+      console.error('Manual match error:', error);
     },
   });
 
   const deleteTransactionMutation = useMutation({
     mutationFn: async ({ transactionId, reason }: { transactionId: string; reason: string }) => {
-      // First, get the current status to store it
       const { data: currentTransaction, error: fetchError } = await supabase
         .from('transactions')
         .select('status')
@@ -415,8 +402,7 @@ export default function Transactions() {
       if (error) throw error;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['transactions'] });
-      queryClient.invalidateQueries({ queryKey: ['transaction-counts'] });
+      invalidateLists();
       showToast('Transaction deleted successfully!', 'success');
     },
     onError: (error) => {
@@ -427,7 +413,6 @@ export default function Transactions() {
 
   const restoreTransactionMutation = useMutation({
     mutationFn: async (transactionId: string) => {
-      // Get the previous status
       const { data: transaction, error: fetchError } = await supabase
         .from('transactions')
         .select('previous_status')
@@ -449,8 +434,7 @@ export default function Transactions() {
       if (error) throw error;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['transactions'] });
-      queryClient.invalidateQueries({ queryKey: ['transaction-counts'] });
+      invalidateLists();
       showToast('Transaction restored successfully!', 'success');
     },
     onError: (error) => {
@@ -459,155 +443,21 @@ export default function Transactions() {
     },
   });
 
-  const unreconcileTransactionMutation = useMutation({
-    mutationFn: async ({ transactionId, reason }: { transactionId: string; reason: string }) => {
-      // STEP 1: Fetch current transaction with validation
-      const { data: transaction, error: fetchError } = await supabase
-        .from('transactions')
-        .select('id, status, matched_transaction_id, source')
-        .eq('id', transactionId)
-        .single();
-
-      if (fetchError) throw new Error(`Failed to fetch transaction: ${fetchError.message}`);
-      if (!transaction) throw new Error('Transaction not found');
-      if (transaction.status !== 'reconciled') throw new Error('Transaction is not reconciled');
-      if (!transaction.matched_transaction_id) throw new Error('No matched transaction found');
-
-      // STEP 2: Fetch matched transaction
-      const { data: matchedTransaction, error: matchedFetchError } = await supabase
-        .from('transactions')
-        .select('id, status, matched_transaction_id, source, is_deleted')
-        .eq('id', transaction.matched_transaction_id)
-        .single();
-
-      if (matchedFetchError) throw new Error(`Failed to fetch matched transaction: ${matchedFetchError.message}`);
-      if (!matchedTransaction) throw new Error('Matched transaction not found or was deleted');
-
-      // STEP 3: Determine original statuses based on source
-      const transaction1NewStatus = transaction.source.startsWith('Google Sheets') ? 'pending-ledger' : 'pending-statement';
-      const transaction2NewStatus = matchedTransaction.source.startsWith('Google Sheets') ? 'pending-ledger' : 'pending-statement';
-
-      // STEP 4: Update transaction 1
-      const { error: update1Error } = await supabase
-        .from('transactions')
-        .update({
-          status: transaction1NewStatus,
-          matched_transaction_id: null,
-          confidence: null,
-        })
-        .eq('id', transaction.id);
-
-      if (update1Error) throw new Error(`Failed to update transaction 1: ${update1Error.message}`);
-
-      // STEP 5: Update transaction 2 (with rollback on failure)
-      const { error: update2Error } = await supabase
-        .from('transactions')
-        .update({
-          status: transaction2NewStatus,
-          matched_transaction_id: null,
-          confidence: null,
-        })
-        .eq('id', matchedTransaction.id);
-
-      if (update2Error) {
-        // ROLLBACK transaction 1
-        await supabase
-          .from('transactions')
-          .update({
-            status: 'reconciled',
-            matched_transaction_id: matchedTransaction.id,
-            confidence: 100,
-          })
-          .eq('id', transaction.id);
-
-        throw new Error(`Failed to update transaction 2: ${update2Error.message}`);
-      }
-
-      // STEP 6: Handle dealer receivable matches
-      const { data: receivableMatches } = await supabase
-        .from('dealer_receivable_matches')
-        .select('id, receivable_id, transaction_id, matched_amount')
-        .or(`transaction_id.eq.${transaction.id},transaction_id.eq.${matchedTransaction.id}`);
-
-      if (receivableMatches && receivableMatches.length > 0) {
-        const receivableIds = [...new Set(receivableMatches.map(m => m.receivable_id))];
-
-        for (const receivableId of receivableIds) {
-          // Fetch receivable
-          const { data: receivable } = await supabase
-            .from('dealer_receivables')
-            .select('id, amount, status, received_at')
-            .eq('id', receivableId)
-            .single();
-
-          if (!receivable) continue;
-
-          // Calculate remaining matched amount (excluding unreconciled transactions)
-          const { data: remainingMatches } = await supabase
-            .from('dealer_receivable_matches')
-            .select('matched_amount, transaction_id')
-            .eq('receivable_id', receivableId);
-
-          const totalMatched = (remainingMatches || [])
-            .filter(m => m.transaction_id !== transaction.id && m.transaction_id !== matchedTransaction.id)
-            .reduce((sum, match) => sum + parseFloat(String(match.matched_amount)), 0);
-
-          const receivableAmount = parseFloat(String(receivable.amount));
-
-          // Revert to pending if no longer fully matched
-          if (totalMatched < receivableAmount && receivable.status === 'received') {
-            await supabase
-              .from('dealer_receivables')
-              .update({
-                status: 'pending',
-                received_at: null,
-              })
-              .eq('id', receivableId);
-
-            // Create audit record
-            await supabase
-              .from('dealer_receivable_changes')
-              .insert({
-                receivable_id: receivableId,
-                changed_at: new Date().toISOString(),
-                field_diffs: {
-                  status: { from: 'received', to: 'pending' },
-                  received_at: { from: receivable.received_at, to: null },
-                },
-                note: `Auto-reverted due to unreconcile of transaction ${transaction.id}. Reason: ${reason}`,
-              });
-          }
-        }
-      }
-
-      // STEP 7: Create audit record (non-blocking)
-      await supabase
-        .from('unreconcile_history')
-        .insert({
-          transaction1_id: transaction.id,
-          transaction2_id: matchedTransaction.id,
-          reason: reason,
-          unreconciled_by: 'user',
-          transaction1_previous_status: 'reconciled',
-          transaction2_previous_status: 'reconciled',
-        })
-        .then(({ error }) => {
-          if (error) console.error('Failed to create audit record:', error);
-        });
-
-      return { transaction, matchedTransaction };
-    },
+  const unmatchMutation = useMutation({
+    mutationFn: async ({ transactionId, reason }: { transactionId: string; reason: string }) =>
+      undoStatementMatch(transactionId, { reason, ...ACTOR }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['transactions'] });
-      queryClient.invalidateQueries({ queryKey: ['transaction-counts'] });
+      invalidateLists();
       queryClient.invalidateQueries({ queryKey: ['dealer-receivables'] });
       queryClient.invalidateQueries({ queryKey: ['dealer-receivable-matches'] });
       queryClient.invalidateQueries({ queryKey: ['dealer-receivables-outstanding-summary'] });
+      setUnmatchModalOpen(false);
+      setTransactionToUnmatch(null);
       showToast('Reconciliation reversed successfully!', 'success');
     },
-    onError: (error) => {
-      showToast(`Failed to unreconcile transaction\n\n${error.message}`, 'error');
-      console.error('Unreconcile transaction error:', error);
+    onError: (error: Error) => {
+      showToast(`Failed to unmatch transaction\n\n${error.message}`, 'error');
+      console.error('Unmatch transaction error:', error);
     },
   });
 
@@ -621,8 +471,7 @@ export default function Transactions() {
       if (error) throw error;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['transactions'] });
-      queryClient.invalidateQueries({ queryKey: ['transaction-counts'] });
+      invalidateLists();
       showToast('Transaction updated successfully!', 'success');
     },
     onError: (error) => {
@@ -631,21 +480,33 @@ export default function Transactions() {
     },
   });
 
-  const [reconcileResult, setReconcileResult] = useState<ReconciliationResult | null>(null);
-
+  // Auto reconcile: compute proposals (no writes), then open the review modal.
   const autoReconcileMutation = useMutation({
-    mutationFn: () => autoReconcileAll('transactions', {
+    mutationFn: () => computeReconciliationProposals('transactions', {
       startDate: effectiveStartDate,
       endDateExclusive: effectiveEndExclusive,
     }),
     onSuccess: (result) => {
-      queryClient.invalidateQueries({ queryKey: ['transactions'] });
-      queryClient.invalidateQueries({ queryKey: ['transaction-counts'] });
-      setReconcileResult(result);
+      setReviewState(result);
     },
     onError: (error) => {
       showToast(`Auto Reconcile Failed\n\n${error.message}`, 'error');
       console.error('Auto reconcile error:', error);
+    },
+  });
+
+  // Apply only the proposals the user kept.
+  const applyMatchesMutation = useMutation({
+    mutationFn: (accepted: MatchProposal[]) => applyMatches(accepted, ACTOR),
+    onSuccess: ({ applied, skipped }) => {
+      invalidateLists();
+      setReviewState(null);
+      const skippedNote = skipped > 0 ? ` (${skipped} skipped — already changed)` : '';
+      showToast(`Applied ${applied} ${applied === 1 ? 'match' : 'matches'}${skippedNote}`, 'success');
+    },
+    onError: (error: Error) => {
+      showToast(`Failed to apply matches\n\n${error.message}`, 'error');
+      console.error('Apply matches error:', error);
     },
   });
 
@@ -671,15 +532,21 @@ export default function Transactions() {
     };
   }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
-  if (isLoadingPreferredMinDate) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-muted-foreground">Loading transactions...</div>
-      </div>
-    );
-  }
+  const switchView = (next: ViewMode) => {
+    setViewMode(next);
+    if (next !== 'match') {
+      setSelectedLedger(null);
+      setSelectedStatement(null);
+      setMatchNote('');
+    }
+  };
 
-  if (isLoading) {
+  const toggleLedger = (t: Transaction) =>
+    setSelectedLedger((prev) => (prev?.id === t.id ? null : t));
+  const toggleStatement = (t: Transaction) =>
+    setSelectedStatement((prev) => (prev?.id === t.id ? null : t));
+
+  if (isLoadingPreferredMinDate) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="text-muted-foreground">Loading transactions...</div>
@@ -706,7 +573,7 @@ export default function Transactions() {
           {autoReconcileMutation.isPending ? (
             <>
               <Loader2 className="h-4 w-4 animate-spin" />
-              Reconciling...
+              Matching...
             </>
           ) : (
             <>
@@ -757,10 +624,7 @@ export default function Transactions() {
               type="text"
               placeholder="MM/DD/YYYY"
               value={dateFrom}
-              onChange={(e) => {
-                const formatted = formatUSDateInput(e.target.value);
-                setDateFrom(formatted);
-              }}
+              onChange={(e) => setDateFrom(formatUSDateInput(e.target.value))}
               onClick={() => openDatePicker(dateFromPickerRef)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
@@ -788,10 +652,7 @@ export default function Transactions() {
               type="text"
               placeholder="MM/DD/YYYY"
               value={dateTo}
-              onChange={(e) => {
-                const formatted = formatUSDateInput(e.target.value);
-                setDateTo(formatted);
-              }}
+              onChange={(e) => setDateTo(formatUSDateInput(e.target.value))}
               onClick={() => openDatePicker(dateToPickerRef)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
@@ -831,98 +692,16 @@ export default function Transactions() {
       </div>
 
       <div className="flex gap-2">
-        <Button
-          variant={statusFilter === 'all' ? 'default' : 'outline'}
-          onClick={() => handleStatusFilterChange('all')}
-          size="sm"
-        >
-          All {counts && <span className="ml-1.5 text-xs opacity-70">({counts.all})</span>}
+        <Button variant={viewMode === 'match' ? 'default' : 'outline'} onClick={() => switchView('match')} size="sm">
+          Match
         </Button>
-        <Button
-          variant={statusFilter === 'reconciled' ? 'default' : 'outline'}
-          onClick={() => handleStatusFilterChange('reconciled')}
-          size="sm"
-        >
+        <Button variant={viewMode === 'reconciled' ? 'default' : 'outline'} onClick={() => switchView('reconciled')} size="sm">
           Reconciled {counts && <span className="ml-1.5 text-xs opacity-70">({counts.reconciled})</span>}
         </Button>
-        <Button
-          variant={statusFilter === 'pending-ledger' ? 'default' : 'outline'}
-          onClick={() => handleStatusFilterChange('pending-ledger')}
-          size="sm"
-        >
-          Google Sheets {counts && <span className="ml-1.5 text-xs opacity-70">({counts['pending-ledger']})</span>}
-        </Button>
-        <Button
-          variant={statusFilter === 'pending-statement' ? 'default' : 'outline'}
-          onClick={() => handleStatusFilterChange('pending-statement')}
-          size="sm"
-        >
-          Zelle/Credit Card {counts && <span className="ml-1.5 text-xs opacity-70">({counts['pending-statement']})</span>}
-        </Button>
-        <Button
-          variant={statusFilter === 'deleted' ? 'default' : 'outline'}
-          onClick={() => handleStatusFilterChange('deleted')}
-          size="sm"
-        >
+        <Button variant={viewMode === 'deleted' ? 'default' : 'outline'} onClick={() => switchView('deleted')} size="sm">
           Deleted {counts && <span className="ml-1.5 text-xs opacity-70">({counts.deleted})</span>}
         </Button>
       </div>
-
-      {selectedForMatch && (
-        <Card className="p-3 bg-blue-50 dark:bg-blue-950 border-blue-200 dark:border-blue-800 sticky top-0 z-10">
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <div className="text-xs font-semibold text-blue-900 dark:text-blue-100">
-                Selected for Match:
-              </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setSelectedForMatch(null)}
-                className="h-7 px-2 text-xs"
-              >
-                Cancel
-              </Button>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-3 text-sm text-blue-800 dark:text-blue-200">
-              <div>
-                <div className="font-medium text-blue-700 dark:text-blue-300 text-xs mb-0.5">Date</div>
-                <div>{formatDate(selectedForMatch.date)}</div>
-              </div>
-              <div>
-                <div className="font-medium text-blue-700 dark:text-blue-300 text-xs mb-0.5">Client / Depositor</div>
-                {selectedForMatch.name && <div className="truncate" title={selectedForMatch.name}>{selectedForMatch.name}</div>}
-                {selectedForMatch.depositor && (
-                  <div className={selectedForMatch.name ? 'text-xs truncate' : 'truncate'} title={selectedForMatch.depositor}>
-                    {selectedForMatch.depositor}
-                  </div>
-                )}
-                {!selectedForMatch.name && !selectedForMatch.depositor && <div>-</div>}
-              </div>
-              <div>
-                <div className="font-medium text-blue-700 dark:text-blue-300 text-xs mb-0.5">Car</div>
-                <div className="truncate">{selectedForMatch.car || '-'}</div>
-              </div>
-              <div>
-                <div className="font-medium text-blue-700 dark:text-blue-300 text-xs mb-0.5">Method</div>
-                <div className="truncate">{selectedForMatch.payment_method || '-'}</div>
-              </div>
-              <div>
-                <div className="font-medium text-blue-700 dark:text-blue-300 text-xs mb-0.5">Amount</div>
-                <div className="font-semibold">{formatCurrency(selectedForMatch.value)}</div>
-              </div>
-              <div>
-                <div className="font-medium text-blue-700 dark:text-blue-300 text-xs mb-0.5">Status</div>
-                <div className="truncate">{selectedForMatch.status}</div>
-              </div>
-              <div>
-                <div className="font-medium text-blue-700 dark:text-blue-300 text-xs mb-0.5">Source</div>
-                <div className="truncate text-xs" title={selectedForMatch.source}>{selectedForMatch.source}</div>
-              </div>
-            </div>
-          </div>
-        </Card>
-      )}
 
       <EditTransactionModal
         isOpen={editModalOpen}
@@ -958,109 +737,200 @@ export default function Transactions() {
         }
       />
 
-      <UnreconcileTransactionModal
-        isOpen={unreconcileModalOpen}
+      <UnmatchTransactionModal
+        isOpen={unmatchModalOpen}
         onClose={() => {
-          setUnreconcileModalOpen(false);
-          setTransactionToUnreconcile(null);
+          setUnmatchModalOpen(false);
+          setTransactionToUnmatch(null);
         }}
         onConfirm={(reason) => {
-          if (transactionToUnreconcile) {
-            unreconcileTransactionMutation.mutate({
-              transactionId: transactionToUnreconcile.id,
-              reason
-            });
+          if (transactionToUnmatch) {
+            unmatchMutation.mutate({ transactionId: transactionToUnmatch.id, reason });
           }
         }}
-        transaction={transactionToUnreconcile}
+        transaction={transactionToUnmatch}
+        isPending={unmatchMutation.isPending}
       />
 
-      <ReconciliationResultModal
-        result={reconcileResult}
-        onClose={() => setReconcileResult(null)}
-      />
+      {reviewState && (
+        <AutoReconcileReviewModal
+          proposals={reviewState.proposals}
+          details={reviewState.details}
+          isApplying={applyMatchesMutation.isPending}
+          onApply={(accepted) => applyMatchesMutation.mutate(accepted)}
+          onClose={() => setReviewState(null)}
+        />
+      )}
 
-      <Card>
-        <div 
-          className="grid gap-3 border-b px-4 py-3 text-xs font-semibold items-center bg-muted/50 sticky top-0 z-10"
-          style={{ gridTemplateColumns }}
-        >
-          <div className="relative flex items-center h-full">
-            <SortableHeader label="Date" column="date" currentSort={sortConfig} onSort={handleSort} />
-            <ResizeHandle width={widths[0]} onResize={(w) => updateWidth(0, w)} />
-          </div>
-          <div className="relative flex items-center h-full">
-            <SortableHeader label="Client / Depositor" column="name" currentSort={sortConfig} onSort={handleSort} />
-            <ResizeHandle width={widths[1]} onResize={(w) => updateWidth(1, w)} />
-          </div>
-          <div className="relative flex items-center h-full">
-            <SortableHeader label="Car" column="car" currentSort={sortConfig} onSort={handleSort} />
-            <ResizeHandle width={widths[2]} onResize={(w) => updateWidth(2, w)} />
-          </div>
-          <div className="relative flex items-center h-full">
-            <SortableHeader label="Method" column="payment_method" currentSort={sortConfig} onSort={handleSort} />
-            <ResizeHandle width={widths[3]} onResize={(w) => updateWidth(3, w)} />
-          </div>
-          <div className="relative flex items-center h-full">
-            <SortableHeader label="Amount" column="value" currentSort={sortConfig} onSort={handleSort} />
-            <ResizeHandle width={widths[4]} onResize={(w) => updateWidth(4, w)} />
-          </div>
-          <div className="relative flex items-center h-full">
-            <SortableHeader label="Status" column="status" currentSort={sortConfig} onSort={handleSort} />
-            <ResizeHandle width={widths[5]} onResize={(w) => updateWidth(5, w)} />
-          </div>
-          <div className="relative flex items-center h-full">
-            <SortableHeader label="Confidence" column="confidence" currentSort={sortConfig} onSort={handleSort} />
-            <ResizeHandle width={widths[6]} onResize={(w) => updateWidth(6, w)} />
-          </div>
-          <div className="text-right px-2">Actions</div>
-        </div>
+      {viewMode === 'match' ? (
+        <div className="space-y-4">
+          {(selectedLedger || selectedStatement) && (
+            <Card className="p-3 sticky top-0 z-10 border-primary/40 bg-primary/5">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div className="grid flex-1 grid-cols-1 sm:grid-cols-[1fr_auto_1fr] items-center gap-3 text-sm">
+                  <SelectionChip label="Google Sheets" t={selectedLedger} onClear={() => setSelectedLedger(null)} />
+                  <ArrowRight className="hidden sm:block h-4 w-4 text-muted-foreground mx-auto" />
+                  <SelectionChip label="Zelle / Credit Card" t={selectedStatement} onClear={() => setSelectedStatement(null)} />
+                </div>
+                <div className="flex items-center gap-2">
+                  <Input
+                    placeholder="Note (optional)"
+                    value={matchNote}
+                    onChange={(e) => setMatchNote(e.target.value)}
+                    className="h-9 w-48"
+                  />
+                  <Button
+                    onClick={() =>
+                      selectedLedger && selectedStatement &&
+                      manualMatchMutation.mutate({ ledger: selectedLedger, statement: selectedStatement, note: matchNote.trim() || undefined })
+                    }
+                    disabled={!selectedLedger || !selectedStatement || manualMatchMutation.isPending}
+                    className="min-w-[110px]"
+                  >
+                    {manualMatchMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                    Match
+                  </Button>
+                </div>
+              </div>
+            </Card>
+          )}
 
-        <div className="divide-y">
-          {filteredTransactions.map((transaction) => (
-            <TransactionRow
-              key={transaction.id}
-              gridTemplateColumns={gridTemplateColumns}
-              transaction={transaction}
-              selectedForMatch={selectedForMatch}
-              onSelectForMatch={setSelectedForMatch}
-              onManualMatch={(t2) => manualReconcileMutation.mutate({ transaction1: selectedForMatch!, transaction2: t2 })}
-              isMatchInProgress={manualReconcileMutation.isPending}
-              allTransactions={filteredTransactions}
-              onDelete={(t) => {
-                setSelectedTransaction(t);
-                setDeleteModalMode('delete');
-                setDeleteModalOpen(true);
-              }}
-              onViewDeleteReason={(t) => {
-                setSelectedTransaction(t);
-                setDeleteModalMode('view');
-                setDeleteModalOpen(true);
-              }}
-              onEdit={(t) => {
-                setTransactionToEdit(t);
-                setEditModalOpen(true);
-              }}
-              onUnreconcile={(t) => {
-                setTransactionToUnreconcile(t);
-                setUnreconcileModalOpen(true);
-              }}
-              statusFilter={statusFilter}
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <TransactionColumn
+              side="ledger"
+              title="Google Sheets"
+              accent="blue"
+              count={counts?.['pending-ledger']}
+              filters={columnFilters}
+              canRunQueries={canRunQueries}
+              selectedId={selectedLedger?.id ?? null}
+              onSelect={toggleLedger}
+              onEdit={(t) => { setTransactionToEdit(t); setEditModalOpen(true); }}
+              onDelete={(t) => { setSelectedTransaction(t); setDeleteModalMode('delete'); setDeleteModalOpen(true); }}
+              sortConfig={ledgerSort}
+              onSortChange={setLedgerSort}
             />
-          ))}
+            <TransactionColumn
+              side="statement"
+              title="Zelle / Credit Card"
+              accent="orange"
+              count={counts?.['pending-statement']}
+              filters={columnFilters}
+              canRunQueries={canRunQueries}
+              selectedId={selectedStatement?.id ?? null}
+              onSelect={toggleStatement}
+              onEdit={(t) => { setTransactionToEdit(t); setEditModalOpen(true); }}
+              onDelete={(t) => { setSelectedTransaction(t); setDeleteModalMode('delete'); setDeleteModalOpen(true); }}
+              sortConfig={statementSort}
+              onSortChange={setStatementSort}
+            />
+          </div>
         </div>
-      </Card>
+      ) : (
+        <>
+          <Card>
+            <div
+              className="grid gap-3 border-b px-4 py-3 text-xs font-semibold items-center bg-muted/50 sticky top-0 z-10"
+              style={{ gridTemplateColumns }}
+            >
+              <div className="relative flex items-center h-full">
+                <SortableHeader label="Date" column="date" currentSort={sortConfig} onSort={handleSort} />
+                <ResizeHandle width={widths[0]} onResize={(w) => updateWidth(0, w)} />
+              </div>
+              <div className="relative flex items-center h-full">
+                <SortableHeader label="Client / Depositor" column="name" currentSort={sortConfig} onSort={handleSort} />
+                <ResizeHandle width={widths[1]} onResize={(w) => updateWidth(1, w)} />
+              </div>
+              <div className="relative flex items-center h-full">
+                <SortableHeader label="Car" column="car" currentSort={sortConfig} onSort={handleSort} />
+                <ResizeHandle width={widths[2]} onResize={(w) => updateWidth(2, w)} />
+              </div>
+              <div className="relative flex items-center h-full">
+                <SortableHeader label="Method" column="payment_method" currentSort={sortConfig} onSort={handleSort} />
+                <ResizeHandle width={widths[3]} onResize={(w) => updateWidth(3, w)} />
+              </div>
+              <div className="relative flex items-center h-full">
+                <SortableHeader label="Amount" column="value" currentSort={sortConfig} onSort={handleSort} />
+                <ResizeHandle width={widths[4]} onResize={(w) => updateWidth(4, w)} />
+              </div>
+              <div className="relative flex items-center h-full">
+                <SortableHeader label="Status" column="status" currentSort={sortConfig} onSort={handleSort} />
+                <ResizeHandle width={widths[5]} onResize={(w) => updateWidth(5, w)} />
+              </div>
+              <div className="relative flex items-center h-full">
+                <SortableHeader label="Confidence" column="confidence" currentSort={sortConfig} onSort={handleSort} />
+                <ResizeHandle width={widths[6]} onResize={(w) => updateWidth(6, w)} />
+              </div>
+              <div className="text-right px-2">Actions</div>
+            </div>
 
-      <div ref={observerTarget} className="py-4 text-center space-y-1">
-        {isFetchingNextPage && (
-          <div className="text-muted-foreground">Loading more...</div>
-        )}
-        <div className="text-muted-foreground">
-          Showing {filteredTransactions.length} transactions
+            <div className="divide-y">
+              {isLoading ? (
+                <div className="p-12 text-center"><Loader2 className="mx-auto h-8 w-8 animate-spin text-muted-foreground" /></div>
+              ) : tableTransactions.length === 0 ? (
+                <div className="p-12 text-center text-muted-foreground">
+                  {viewMode === 'reconciled' ? 'No reconciled transactions.' : 'No deleted transactions.'}
+                </div>
+              ) : (
+                tableTransactions.map((transaction) => (
+                  <TransactionRow
+                    key={transaction.id}
+                    gridTemplateColumns={gridTemplateColumns}
+                    transaction={transaction}
+                    viewMode={viewMode}
+                    onViewDeleteReason={(t) => {
+                      setSelectedTransaction(t);
+                      setDeleteModalMode('view');
+                      setDeleteModalOpen(true);
+                    }}
+                    onUnmatch={(t) => {
+                      setTransactionToUnmatch(t);
+                      setUnmatchModalOpen(true);
+                    }}
+                  />
+                ))
+              )}
+            </div>
+          </Card>
+
+          <div ref={observerTarget} className="py-4 text-center space-y-1">
+            {isFetchingNextPage && (
+              <div className="text-muted-foreground">Loading more...</div>
+            )}
+            <div className="text-muted-foreground">
+              Showing {tableTransactions.length} transactions
+            </div>
+            <div className="text-muted-foreground">
+              Total of transactions: {formatCurrency(filteredTotal)}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function SelectionChip({ label, t, onClear }: { label: string; t: Transaction | null; onClear: () => void }) {
+  if (!t) {
+    return (
+      <div className="rounded-md border border-dashed bg-background/60 px-3 py-2 text-xs text-muted-foreground italic">
+        Select a {label} entry…
+      </div>
+    );
+  }
+  return (
+    <div className="flex items-center justify-between gap-2 rounded-md border bg-background px-3 py-2">
+      <div className="min-w-0">
+        <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</div>
+        <div className="truncate text-xs font-medium" title={t.name || t.depositor || ''}>
+          {formatDate(t.date)} · {t.name || t.depositor || '-'}
         </div>
-        <div className="text-muted-foreground">
-          Total of transactions: {formatCurrency(filteredTotal)}
-        </div>
+      </div>
+      <div className="flex items-center gap-1">
+        <span className="font-mono text-xs font-semibold whitespace-nowrap">{formatCurrency(t.value)}</span>
+        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onClear} title="Clear selection">
+          <X className="h-3 w-3" />
+        </Button>
       </div>
     </div>
   );
@@ -1068,29 +938,15 @@ export default function Transactions() {
 
 function TransactionRow({
   transaction,
-  selectedForMatch,
-  onSelectForMatch,
-  onManualMatch,
-  isMatchInProgress,
-  allTransactions,
-  onDelete,
+  viewMode,
   onViewDeleteReason,
-  onEdit,
-  onUnreconcile,
-  statusFilter,
+  onUnmatch,
   gridTemplateColumns,
 }: {
   transaction: Transaction;
-  selectedForMatch: Transaction | null;
-  onSelectForMatch: (transaction: Transaction | null) => void;
-  onManualMatch: (transaction: Transaction) => void;
-  isMatchInProgress: boolean;
-  allTransactions: Transaction[];
-  onDelete: (transaction: Transaction) => void;
+  viewMode: ViewMode;
   onViewDeleteReason: (transaction: Transaction) => void;
-  onEdit: (transaction: Transaction) => void;
-  onUnreconcile: (transaction: Transaction) => void;
-  statusFilter: ReconciliationStatus | 'all' | 'deleted';
+  onUnmatch: (transaction: Transaction) => void;
   gridTemplateColumns: string;
 }) {
   const [showMatch, setShowMatch] = useState(false);
@@ -1099,13 +955,11 @@ function TransactionRow({
     queryKey: ['transaction', 'match', transaction.matched_transaction_id],
     queryFn: async () => {
       if (!transaction.matched_transaction_id) return null;
-
       const { data, error } = await supabase
         .from('transactions')
         .select('*')
         .eq('id', transaction.matched_transaction_id)
-        .single();
-
+        .maybeSingle();
       if (error) throw error;
       return data;
     },
@@ -1121,7 +975,6 @@ function TransactionRow({
   const getStatusLabel = (status: string): string => {
     switch (status) {
       case 'pending-ledger':
-        return 'Pending';
       case 'pending-statement':
         return 'Pending';
       case 'reconciled':
@@ -1138,21 +991,13 @@ function TransactionRow({
     return 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200';
   };
 
-  // Apply 60% opacity to text of deleted transactions when viewing "All"
-  const deletedTextStyle = transaction.is_deleted && statusFilter === 'all' ? 'opacity-60' : '';
-
   return (
-    <div className={`group hover:bg-muted/50 transition-colors ${deletedTextStyle}`}>
-      <div 
-        className="grid gap-3 px-4 py-3 items-center text-sm"
-        style={{ gridTemplateColumns }}
-      >
-        {/* Date */}
+    <div className="group hover:bg-muted/50 transition-colors">
+      <div className="grid gap-3 px-4 py-3 items-center text-sm" style={{ gridTemplateColumns }}>
         <div>
           <div className="font-medium text-xs">{formatDate(transaction.date)}</div>
         </div>
 
-        {/* Client / Depositor */}
         <div className="min-w-0">
           {transaction.name && (
             <div className="font-medium text-xs truncate" title={`Client: ${transaction.name}`}>
@@ -1172,29 +1017,24 @@ function TransactionRow({
           )}
         </div>
 
-        {/* Car */}
         <div>
           <div className="font-medium text-xs truncate">{transaction.car || '-'}</div>
         </div>
 
-        {/* Method */}
         <div>
           <div className="font-medium text-xs truncate">{transaction.payment_method || '-'}</div>
         </div>
 
-        {/* Amount */}
         <div>
           <div className="font-medium text-xs">{formatCurrency(transaction.value)}</div>
         </div>
 
-        {/* Status */}
         <div>
           <Badge className={statusColors[transaction.status as keyof typeof statusColors]}>
             {getStatusLabel(transaction.status)}
           </Badge>
         </div>
 
-        {/* Confidence */}
         <div>
           {transaction.status === 'reconciled' && transaction.confidence !== null ? (
             <Badge className={getConfidenceColor(transaction.confidence)}>
@@ -1205,33 +1045,8 @@ function TransactionRow({
           )}
         </div>
 
-        {/* Actions */}
         <div className="flex items-center justify-end gap-1">
-          {!transaction.is_deleted && transaction.status !== 'reconciled' && (
-            <Button
-              size="icon"
-              variant={selectedForMatch?.id === transaction.id ? 'default' : 'ghost'}
-              className="h-8 w-8"
-              onClick={() => {
-                if (selectedForMatch?.id === transaction.id) {
-                  onSelectForMatch(null);
-                } else if (selectedForMatch) {
-                  onManualMatch(transaction);
-                } else {
-                  onSelectForMatch(transaction);
-                }
-              }}
-              disabled={isMatchInProgress || (selectedForMatch !== null && selectedForMatch.id !== transaction.id && (selectedForMatch.source === transaction.source))}
-              title={selectedForMatch?.id === transaction.id ? 'Cancel selection' : selectedForMatch ? 'Match with selected' : 'Select for matching'}
-            >
-              {isMatchInProgress && selectedForMatch?.id === transaction.id ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Link2 className="h-4 w-4" />
-              )}
-            </Button>
-          )}
-          {!transaction.is_deleted && transaction.status === 'reconciled' && (
+          {viewMode === 'reconciled' && (
             <>
               <Button
                 size="icon"
@@ -1246,14 +1061,14 @@ function TransactionRow({
                 size="icon"
                 variant="ghost"
                 className="h-8 w-8 text-destructive hover:text-destructive"
-                onClick={() => onUnreconcile(transaction)}
-                title="Unreconcile transaction"
+                onClick={() => onUnmatch(transaction)}
+                title="Unmatch transaction"
               >
                 <Link2Off className="h-4 w-4" />
               </Button>
             </>
           )}
-          {transaction.is_deleted && (
+          {viewMode === 'deleted' && (
             <Button
               size="icon"
               variant="ghost"
@@ -1264,28 +1079,6 @@ function TransactionRow({
               <Eye className="h-4 w-4" />
             </Button>
           )}
-          {!transaction.is_deleted && transaction.status !== 'reconciled' && (
-            <>
-              <Button
-                size="icon"
-                variant="ghost"
-                className="h-8 w-8"
-                onClick={() => onEdit(transaction)}
-                title="Edit transaction"
-              >
-                <Pencil className="h-4 w-4" />
-              </Button>
-              <Button
-                size="icon"
-                variant="ghost"
-                className="h-8 w-8"
-                onClick={() => onDelete(transaction)}
-                title="Delete transaction"
-              >
-                <Trash2 className="h-4 w-4" />
-              </Button>
-            </>
-          )}
         </div>
       </div>
 
@@ -1295,12 +1088,9 @@ function TransactionRow({
             <div className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">
               Matched Transaction ({transaction.confidence}% confidence)
             </div>
-            <div 
-              className="grid gap-3 text-sm"
-              style={{ gridTemplateColumns }}
-            >
+            <div className="grid gap-3 text-sm" style={{ gridTemplateColumns }}>
               <div className="text-xs">{formatDate(matchedTransaction.date)}</div>
-              
+
               <div className="min-w-0">
                 {matchedTransaction.name && (
                   <div className="truncate text-xs" title={`Client: ${matchedTransaction.name}`}>
@@ -1323,7 +1113,7 @@ function TransactionRow({
               <div className="truncate text-xs">{matchedTransaction.car || '-'}</div>
               <div className="truncate text-xs">{matchedTransaction.payment_method || '-'}</div>
               <div className="text-xs">{formatCurrency(matchedTransaction.value)}</div>
-              
+
               <div className="col-span-3 text-xs text-muted-foreground truncate flex items-center">
                 Source: {matchedTransaction.source}
               </div>

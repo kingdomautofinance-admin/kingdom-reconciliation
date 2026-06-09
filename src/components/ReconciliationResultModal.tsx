@@ -1,18 +1,12 @@
-import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { CheckCircle2, AlertTriangle, X, ChevronDown, ChevronRight } from 'lucide-react';
-import type { ReconciliationResult, MatchDetail } from '@/lib/reconciliation-optimized';
+import { CheckCircle2, AlertTriangle, X } from 'lucide-react';
+import type { ReconciliationResult } from '@/lib/reconciliation-optimized';
+import { ReconciliationDiagnostics } from '@/components/ReconciliationDiagnostics';
 
 interface ReconciliationResultModalProps {
   result: ReconciliationResult | null;
   onClose: () => void;
-}
-
-function formatCurrency(value: string | number): string {
-  const num = typeof value === 'string' ? parseFloat(value) : value;
-  if (Number.isNaN(num)) return String(value);
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(num);
 }
 
 function formatDate(iso: string): string {
@@ -35,8 +29,6 @@ function formatRange(range: ReconciliationResult['appliedRange']): string {
 }
 
 export function ReconciliationResultModal({ result, onClose }: ReconciliationResultModalProps) {
-  const [showDiagnostic, setShowDiagnostic] = useState(false);
-
   if (!result) return null;
 
   const incorrect = result.totalProcessed - result.matched;
@@ -45,8 +37,6 @@ export function ReconciliationResultModal({ result, onClose }: ReconciliationRes
     : 0;
   const isFullySuccessful = result.matched > 0 && incorrect === 0;
   const hasMatches = result.matched > 0;
-
-  const unmatchedDetails: MatchDetail[] = (result.details ?? []).filter(d => d.overallStatus === 'INCORRECT');
 
   return (
     <div
@@ -110,64 +100,7 @@ export function ReconciliationResultModal({ result, onClose }: ReconciliationRes
           <div>• Value: 100% exact match</div>
         </div>
 
-        {incorrect > 0 && (
-          <div className="rounded-lg border">
-            <button
-              type="button"
-              onClick={() => setShowDiagnostic(v => !v)}
-              className="w-full flex items-center justify-between p-3 text-left text-sm font-medium hover:bg-muted/40 transition-colors"
-              aria-expanded={showDiagnostic}
-            >
-              <span className="flex items-center gap-2">
-                {showDiagnostic ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                Why didn't {incorrect} {incorrect === 1 ? 'row' : 'rows'} match?
-              </span>
-              <span className="text-xs text-muted-foreground">Showing first {Math.min(unmatchedDetails.length, 10)}</span>
-            </button>
-
-            {showDiagnostic && (
-              <div className="border-t divide-y">
-                {unmatchedDetails.slice(0, 10).map((detail) => {
-                  const ledger = detail.ledgerTransaction;
-                  const sameDate = detail.sameDateCandidates ?? [];
-                  return (
-                    <div key={ledger.id} className="p-3 space-y-2 text-xs">
-                      <div className="flex items-baseline justify-between gap-3">
-                        <div className="font-medium text-sm truncate">
-                          {ledger.name || ledger.depositor || '(no name)'}
-                        </div>
-                        <div className="font-mono font-semibold whitespace-nowrap">
-                          {formatCurrency(ledger.value)}
-                        </div>
-                      </div>
-                      <div className="text-muted-foreground">
-                        {detail.failures[0] ?? 'No matching statement transaction.'}
-                      </div>
-                      {sameDate.length > 0 && (
-                        <div className="rounded border bg-muted/30 p-2 space-y-1">
-                          <div className="text-[10px] uppercase text-muted-foreground font-semibold">
-                            Same-date statement entries (different amounts)
-                          </div>
-                          {sameDate.map(c => (
-                            <div key={c.id} className="flex items-baseline justify-between gap-3">
-                              <span className="truncate">
-                                {c.name || c.depositor || c.source || '(unnamed)'}
-                                {c.payment_method ? ` · ${c.payment_method}` : ''}
-                              </span>
-                              <span className="font-mono whitespace-nowrap">
-                                {formatCurrency(c.value)}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        )}
+        <ReconciliationDiagnostics details={result.details ?? []} />
 
         <div className="flex justify-end pt-2">
           <Button onClick={onClose} className="min-w-[100px]">

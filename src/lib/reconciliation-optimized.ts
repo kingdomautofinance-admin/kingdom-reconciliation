@@ -1,6 +1,7 @@
 import { compareTwoStrings } from 'string-similarity';
 import type { Transaction } from './database.types';
 import { supabase } from './supabase';
+import { applyStatementMatchesBatch } from './matchWriter';
 
 interface ReconciliationSettings {
   accuracy_threshold: number;
@@ -63,6 +64,22 @@ interface IndexedTransaction extends Transaction {
   dateKey: string;
   valueKey: number;
   methodKey: string;
+}
+
+/** A proposed (not-yet-applied) statement match produced by the dry-run matcher. */
+export interface MatchProposal {
+  ledger: Transaction;
+  statement: Transaction;
+  confidence: number;
+  gap: number;
+}
+
+/** Result of the dry-run matcher: proposals to review + unmatched diagnostics. */
+export interface ReconciliationProposalsResult {
+  proposals: MatchProposal[];
+  details: MatchDetail[];
+  totalProcessed: number;
+  appliedRange: { startDate: string; endDateExclusive: string | null };
 }
 
 // Date match - exact same date only
@@ -147,13 +164,13 @@ function evaluateReconciliation(ledger: Transaction, statement: Transaction): Ma
  */
 export async function autoReconcileSystemAudit(): Promise<ReconciliationResult> {
   console.log('Starting System Audit reconciliation...');
-  
+
   // 1. Fetch settings
   const { data: settingsData } = await supabase
     .from('reconciliation_settings')
     .select('*')
     .single();
-  
+
   const settings: ReconciliationSettings = settingsData || {
     accuracy_threshold: 1.00,
     stripe_fee_percent: 2.9,
@@ -170,7 +187,7 @@ export async function autoReconcileSystemAudit(): Promise<ReconciliationResult> 
 
   const matches: any[] = [];
   const details: MatchDetail[] = [];
-  
+
   // Index system transactions for faster lookup
   const systemIndex = createLookupIndex(pendingSystem as any);
 
@@ -183,7 +200,7 @@ export async function autoReconcileSystemAudit(): Promise<ReconciliationResult> 
 
     const key = `${dateKey}|${valueKey}|${methodKey}`;
     const candidates = systemIndex.get(key) || [];
-    
+
     let bestMatch = null;
     if (candidates.length > 0) {
       // Find best name match among candidates with same date/value/method
@@ -200,7 +217,7 @@ export async function autoReconcileSystemAudit(): Promise<ReconciliationResult> 
     if (bestMatch) {
       const gap = valueVal - Math.abs(parseFloat(bestMatch.value));
       const confidence = checkNameMatch(ledgerTrans, bestMatch);
-      
+
       matches.push({
         ledger_id: ledgerTrans.id,
         target_id: bestMatch.id,
@@ -396,59 +413,35 @@ async function fetchAllTransactions(
 }
 
 /**
- * OPTIMIZED: Auto reconcile with batched updates and indexed lookups
- * Performance improvements:
- * - Paginated fetching to handle unlimited transaction counts (removes 1000 limit)
- * - Hash map indexing for O(1) lookups (was O(n) per transaction)
- * - Batched database updates (was 2 queries per match)
- * - Progress tracking for large datasets
+ * DRY-RUN matcher: computes proposed STATEMENT matches WITHOUT writing anything.
+ *
+ * This is the pure matching core shared by both the post-import auto-reconcile
+ * (which applies all proposals immediately) and the Transactions-page review
+ * flow (which lets the user keep/skip each proposal before applying). It keeps
+ * the indexed lookups, the Stripe-fee fallback, double-match prevention, and the
+ * same-date diagnostics intact.
  */
-export async function autoReconcileAllOptimized(
+export async function computeReconciliationProposals(
   tableName: 'transactions' | 'kingdom_transactions' = 'transactions',
   dateRange?: ReconciliationDateRange
-): Promise<ReconciliationResult> {
+): Promise<ReconciliationProposalsResult> {
   const appliedRange = {
     startDate: resolveStartDate(dateRange?.startDate),
     endDateExclusive: dateRange?.endDateExclusive ?? null,
   };
 
-  console.log('Starting OPTIMIZED auto reconciliation...');
-  console.log('Criteria:');
-  console.log('  • Date: exact match');
-  console.log('  • Value: 100% exact match');
-  console.log(`  • Date range: ${appliedRange.startDate} to ${appliedRange.endDateExclusive ?? '(no end)'}\n`);
-
-  const startTime = performance.now();
-
-  // OPTIMIZATION 1: Fetch all data with pagination (no 1000 limit)
-  console.log('Fetching pending transactions with pagination...');
-  const fetchStartTime = performance.now();
-
   const [pendingLedger, pendingStatements] = await Promise.all([
     fetchAllTransactions(tableName, 'pending-ledger', dateRange),
-    fetchAllTransactions(tableName, 'pending-statement', dateRange)
+    fetchAllTransactions(tableName, 'pending-statement', dateRange),
   ]);
 
-  const fetchTime = Math.round(performance.now() - fetchStartTime);
-  console.log(`\nFetch completed in ${fetchTime}ms`);
-  console.log(`  • Ledger transactions: ${pendingLedger.length}`);
-  console.log(`  • Statement transactions: ${pendingStatements.length}\n`);
-
   if (pendingLedger.length === 0) {
-    console.log('No pending-ledger transactions to process.');
-    return {
-      matched: 0,
-      totalProcessed: 0,
-      details: [],
-      appliedRange,
-    };
+    return { proposals: [], details: [], totalProcessed: 0, appliedRange };
   }
 
   if (pendingStatements.length === 0) {
-    console.log('No pending-statement transactions available for matching.');
     return {
-      matched: 0,
-      totalProcessed: pendingLedger.length,
+      proposals: [],
       details: pendingLedger.map(ledgerTrans => ({
         ledgerTransaction: ledgerTrans,
         statementTransaction: null,
@@ -457,26 +450,19 @@ export async function autoReconcileAllOptimized(
         paymentMethodMatch: 0,
         nameMatch: 0,
         overallStatus: 'INCORRECT' as const,
-        failures: ['No pending-statement transactions available']
+        failures: ['No pending-statement transactions available'],
       })),
+      totalProcessed: pendingLedger.length,
       appliedRange,
     };
   }
 
-  console.log(`Processing ${pendingLedger.length} pending-ledger transactions...`);
-  console.log(`Candidates: ${pendingStatements.length} pending-statement transactions\n`);
-
-  // OPTIMIZATION 2: Create indexed lookup for O(1) search.
   // Index by date+value only — payment_method strings often differ between
-  // sources (e.g. Sheets "Stripe" vs bank parser "Stripe receipt"), which
-  // would otherwise cause every lookup to miss.
-  const indexTime = performance.now();
+  // sources (e.g. Sheets "Stripe" vs bank parser "Stripe receipt").
   const candidatesIndex = createLookupIndex(pendingStatements, false);
 
-  // Diagnostic-only: same-date index so we can show, for unmatched ledger
-  // rows, which statement rows landed on the same date with different values.
-  // Lets the user distinguish "no statement data exists for this date" from
-  // "data exists but the amounts are off by some delta".
+  // Diagnostic-only: same-date index so we can show, for unmatched ledger rows,
+  // which statement rows landed on the same date with different values.
   const byDateIndex = new Map<string, Transaction[]>();
   for (const stmt of pendingStatements) {
     if (stmt.matched_transaction_id) continue;
@@ -484,38 +470,19 @@ export async function autoReconcileAllOptimized(
     if (!byDateIndex.has(dateKey)) byDateIndex.set(dateKey, []);
     byDateIndex.get(dateKey)!.push(stmt);
   }
-  console.log(`Index created in ${Math.round(performance.now() - indexTime)}ms`);
 
   const details: MatchDetail[] = [];
-  const matches: Array<{ ledgerId: string; statementId: string }> = [];
-
-  // OPTIMIZATION 3: Find all matches first, update in batch
-  console.log('Starting reconciliation matching...');
-  const PROGRESS_INTERVAL = 500;
-  let processedCount = 0;
+  const proposals: MatchProposal[] = [];
 
   for (const ledgerTrans of pendingLedger) {
     const match = await findMatchForTransactionOptimized(ledgerTrans, candidatesIndex);
-    processedCount++;
-
-    // Log progress every 500 transactions
-    if (processedCount % PROGRESS_INTERVAL === 0 || processedCount === pendingLedger.length) {
-      const percentage = Math.round((processedCount / pendingLedger.length) * 100);
-      console.log(`Progress: ${processedCount}/${pendingLedger.length} (${percentage}%) - Matches found: ${matches.length}`);
-    }
 
     if (match) {
-      matches.push({
-        ledgerId: ledgerTrans.id,
-        statementId: match.id
-      });
+      proposals.push({ ledger: ledgerTrans, statement: match, confidence: 100, gap: 0 });
+      details.push(evaluateReconciliation(ledgerTrans, match));
 
-      const evaluation = evaluateReconciliation(ledgerTrans, match);
-      details.push(evaluation);
-
-      // Remove from index to prevent double-matching.
-      // Key must mirror the date+value-only format used when the index was
-      // built above (createLookupIndex(..., false)).
+      // Remove from index to prevent double-matching. Key mirrors the
+      // date+value-only format used when the index was built above.
       const dateKey = new Date(match.date).toISOString().split('T')[0];
       const valueKey = Math.round(Math.abs(
         typeof match.value === 'string' ? parseFloat(match.value) : match.value
@@ -551,8 +518,6 @@ export async function autoReconcileAllOptimized(
         ? `No statement entries exist on ${ledgerDateKey}`
         : `Statement entries exist on ${ledgerDateKey} but with different amounts`;
 
-      console.log(`✗ INCORRECT: ${ledgerTrans.name || ledgerTrans.depositor} - $${ledgerTrans.value} - ${ledgerTrans.date} — ${failureReason}`);
-
       details.push({
         ledgerTransaction: ledgerTrans,
         statementTransaction: null,
@@ -567,70 +532,50 @@ export async function autoReconcileAllOptimized(
     }
   }
 
-  // OPTIMIZATION 4: Batch update all matches
+  return { proposals, details, totalProcessed: pendingLedger.length, appliedRange };
+}
+
+/**
+ * Apply a set of accepted proposals through the unified match writer so the
+ * results are attributed + undoable exactly like manual matches. Re-verifies
+ * each side is still pending before writing (the user may have acted between
+ * computing and applying).
+ */
+export async function applyMatches(
+  accepted: MatchProposal[],
+  actor: { userId: string | null; userEmail: string | null } = { userId: null, userEmail: null },
+): Promise<{ applied: number; skipped: number }> {
+  return applyStatementMatchesBatch(
+    accepted.map(p => ({ ledger: p.ledger, statement: p.statement, confidence: p.confidence })),
+    { source: 'auto', verifyPending: true, userId: actor.userId, userEmail: actor.userEmail },
+  );
+}
+
+/**
+ * OPTIMIZED: Auto reconcile — computes proposals then applies them all.
+ *
+ * Kept for the post-import "Run auto-reconciliation after import" flows
+ * (BankUpload / CardUpload / GoogleSheetsConnection / KingdomUpload). It now
+ * routes its writes through the unified match writer so post-import auto matches
+ * also set matched_transaction_id + an attributed STATEMENT link and are
+ * therefore undoable like every other match. External signature/return are
+ * unchanged.
+ */
+export async function autoReconcileAllOptimized(
+  tableName: 'transactions' | 'kingdom_transactions' = 'transactions',
+  dateRange?: ReconciliationDateRange
+): Promise<ReconciliationResult> {
+  const { proposals, details, totalProcessed, appliedRange } =
+    await computeReconciliationProposals(tableName, dateRange);
+
   let matched = 0;
-  if (matches.length > 0) {
-    console.log(`\nUpdating ${matches.length} matches in database...`);
-
-    // Update in batches of 50 to avoid payload limits
-    const BATCH_SIZE = 50;
-    for (let i = 0; i < matches.length; i += BATCH_SIZE) {
-      const batch = matches.slice(i, i + BATCH_SIZE);
-
-      // 1. Insert links
-      const links = batch.map(({ ledgerId, statementId }) => ({
-        ledger_id: ledgerId,
-        target_id: statementId,
-        type: 'STATEMENT',
-        confidence_score: 100,
-        is_confirmed: true
-      }));
-      
-      const { error: linkError } = await supabase.from('reconciliation_links').insert(links);
-      
-      // 2. Update statuses
-      const ledgerIds = batch.map(m => m.ledgerId);
-      const statementIds = batch.map(m => m.statementId);
-
-      const [ledgerUpdate, statementUpdate] = await Promise.all([
-        supabase.from('transactions').update({ status: 'reconciled' }).in('id', ledgerIds),
-        supabase.from('transactions').update({ status: 'reconciled' }).in('id', statementIds)
-      ]);
-
-      if (!linkError && !ledgerUpdate.error && !statementUpdate.error) {
-        matched += batch.length;
-      }
-    }
+  if (proposals.length > 0) {
+    const { applied } = await applyStatementMatchesBatch(
+      proposals.map(p => ({ ledger: p.ledger, statement: p.statement, confidence: p.confidence })),
+      { source: 'auto', userId: null, userEmail: null },
+    );
+    matched = applied;
   }
 
-  const totalTime = Math.round(performance.now() - startTime);
-
-  console.log(`\n${'='.repeat(60)}`);
-  console.log('RECONCILIATION COMPLETE');
-  console.log(`${'='.repeat(60)}`);
-  console.log(`Total Time: ${totalTime}ms`);
-  console.log(`Total Processed: ${pendingLedger.length}`);
-  console.log(`Reconciliation CORRECT: ${matched}`);
-  console.log(`Reconciliation INCORRECT: ${pendingLedger.length - matched}`);
-  console.log(`Performance: ${Math.round(pendingLedger.length / (totalTime / 1000))} transactions/sec`);
-  console.log(`${'='.repeat(60)}\n`);
-
-  const incorrectDetails = details.filter(d => d.overallStatus === 'INCORRECT');
-  if (incorrectDetails.length > 0) {
-    console.log('Failed Reconciliations Summary:');
-    incorrectDetails.slice(0, 10).forEach((detail, idx) => {
-      console.log(`\n${idx + 1}. ${detail.ledgerTransaction.name || detail.ledgerTransaction.depositor}`);
-      detail.failures.forEach(failure => console.log(`   - ${failure}`));
-    });
-    if (incorrectDetails.length > 10) {
-      console.log(`\n... and ${incorrectDetails.length - 10} more failed reconciliations`);
-    }
-  }
-
-  return {
-    matched,
-    totalProcessed: pendingLedger.length,
-    details,
-    appliedRange,
-  };
+  return { matched, totalProcessed, details, appliedRange };
 }
