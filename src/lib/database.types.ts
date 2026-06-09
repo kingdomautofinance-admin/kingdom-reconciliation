@@ -244,6 +244,9 @@ export interface Database {
           gap_amount: string
           confidence_score: number
           is_confirmed: boolean
+          created_by: string | null
+          source: string | null
+          note: string | null
           created_at: string
         }
         Insert: {
@@ -254,6 +257,9 @@ export interface Database {
           gap_amount?: string
           confidence_score?: number
           is_confirmed?: boolean
+          created_by?: string | null
+          source?: string | null
+          note?: string | null
           created_at?: string
         }
         Update: {
@@ -264,6 +270,9 @@ export interface Database {
           gap_amount?: string
           confidence_score?: number
           is_confirmed?: boolean
+          created_by?: string | null
+          source?: string | null
+          note?: string | null
           created_at?: string
         }
       }
@@ -352,6 +361,44 @@ export interface Database {
           is_deleted?: boolean
           deleted_reason?: string | null
           previous_status?: string | null
+          created_at?: string
+        }
+      }
+      unreconcile_history: {
+        Row: {
+          id: string
+          transaction1_id: string
+          transaction2_id: string
+          reason: string
+          unreconciled_by: string | null
+          unreconciled_by_id: string | null
+          unreconciled_at: string
+          transaction1_previous_status: string
+          transaction2_previous_status: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          transaction1_id: string
+          transaction2_id: string
+          reason: string
+          unreconciled_by?: string | null
+          unreconciled_by_id?: string | null
+          unreconciled_at?: string
+          transaction1_previous_status: string
+          transaction2_previous_status: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          transaction1_id?: string
+          transaction2_id?: string
+          reason?: string
+          unreconciled_by?: string | null
+          unreconciled_by_id?: string | null
+          unreconciled_at?: string
+          transaction1_previous_status?: string
+          transaction2_previous_status?: string
           created_at?: string
         }
       }
