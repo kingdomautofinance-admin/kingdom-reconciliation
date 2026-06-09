@@ -10,25 +10,29 @@ export default function Dashboard() {
     queryFn: async () => {
       const MIN_DATE = '2024-05-01';
 
-      // Get counts using exact count (only transactions >= 2024-05-01)
+      // Get counts using exact count (only transactions >= 2024-05-01, excluding deleted)
       const [totalResult, reconciledResult, pendingLedgerResult, pendingStatementResult] = await Promise.all([
         supabase
           .from('transactions')
           .select('*', { count: 'exact', head: true })
+          .eq('is_deleted', false)
           .gte('date', MIN_DATE),
         supabase
           .from('transactions')
           .select('*', { count: 'exact', head: true })
+          .eq('is_deleted', false)
           .eq('status', 'reconciled')
           .gte('date', MIN_DATE),
         supabase
           .from('transactions')
           .select('*', { count: 'exact', head: true })
+          .eq('is_deleted', false)
           .eq('status', 'pending-ledger')
           .gte('date', MIN_DATE),
         supabase
           .from('transactions')
           .select('*', { count: 'exact', head: true })
+          .eq('is_deleted', false)
           .eq('status', 'pending-statement')
           .gte('date', MIN_DATE)
       ]);
@@ -49,6 +53,7 @@ export default function Dashboard() {
           let query = supabase
             .from('transactions')
             .select('value')
+            .eq('is_deleted', false)
             .gte('date', MIN_DATE)
             .range(offset, offset + PAGE_SIZE - 1);
 
