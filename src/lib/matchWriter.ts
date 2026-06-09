@@ -59,6 +59,39 @@ export function orderLedgerStatement(
 }
 
 /**
+ * Resolve the id of the transaction a STATEMENT match points to. Prefers
+ * `matched_transaction_id`, but falls back to the STATEMENT `reconciliation_links`
+ * row — this is what makes legacy auto matches (which set the link but never set
+ * matched_transaction_id) viewable/undoable even before the backfill migration runs.
+ */
+async function resolveCounterpartId(transactionId: string, matchedId: string | null): Promise<string | null> {
+  if (matchedId) return matchedId;
+  const { data: link } = await db
+    .from('reconciliation_links')
+    .select('ledger_id, target_id')
+    .eq('type', 'STATEMENT')
+    .or(`ledger_id.eq.${transactionId},target_id.eq.${transactionId}`)
+    .limit(1)
+    .maybeSingle();
+  if (!link) return null;
+  return link.ledger_id === transactionId ? link.target_id : link.ledger_id;
+}
+
+/**
+ * Fetch the full counterpart transaction a row is matched to (via
+ * matched_transaction_id or the STATEMENT link fallback). Returns null if there
+ * is no resolvable counterpart in `transactions` (e.g. a System-audit match).
+ */
+export async function getMatchedCounterpart(
+  transaction: { id: string; matched_transaction_id: string | null },
+): Promise<Transaction | null> {
+  const counterpartId = await resolveCounterpartId(transaction.id, transaction.matched_transaction_id);
+  if (!counterpartId) return null;
+  const { data } = await db.from('transactions').select('*').eq('id', counterpartId).maybeSingle();
+  return (data as Transaction) ?? null;
+}
+
+/**
  * Create a single STATEMENT match between two transactions. Inserts the link
  * first (so a failure there aborts before any row is mutated), then updates both
  * rows, compensating (deleting the link / reverting the first row) on failure.
@@ -218,7 +251,11 @@ export async function undoStatementMatch(
   if (fetchError) throw new Error(`Failed to fetch transaction: ${fetchError.message}`);
   if (!transaction) throw new Error('Transaction not found');
   if (transaction.status !== 'reconciled') throw new Error('Transaction is not reconciled');
-  if (!transaction.matched_transaction_id) throw new Error('No matched transaction found');
+
+  // Resolve the counterpart (matched_transaction_id, or the STATEMENT link for
+  // legacy auto rows that predate the backfill).
+  const counterpartId = await resolveCounterpartId(transaction.id, transaction.matched_transaction_id);
+  if (!counterpartId) throw new Error('No matched transaction found');
 
   // GUARD: refuse Stripe/System-managed matches (don't disturb their links).
   const { data: foreignLinks } = await db
@@ -235,7 +272,7 @@ export async function undoStatementMatch(
   const { data: matchedTransaction, error: matchedFetchError } = await db
     .from('transactions')
     .select('id, status, matched_transaction_id, source, is_deleted')
-    .eq('id', transaction.matched_transaction_id)
+    .eq('id', counterpartId)
     .maybeSingle();
 
   if (matchedFetchError) throw new Error(`Failed to fetch matched transaction: ${matchedFetchError.message}`);
